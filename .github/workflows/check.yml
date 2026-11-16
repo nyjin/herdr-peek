@@ -1,0 +1,20 @@
+name: Check
+
+# Branches and pull requests: the tests on Linux (platform-neutral modules) and macOS (everything). Pushes to main
+# are tested by the release workflow.
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tests
+        run: cargo test

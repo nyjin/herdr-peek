@@ -1,0 +1,25 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    ["@semantic-release/exec", { "prepareCmd": "scripts/set-version.sh ${nextRelease.version}" }],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "dist/peek-macos-aarch64", "label": "peek for macOS on Apple silicon" },
+          { "path": "dist/peek-macos-aarch64.sha256", "label": "SHA-256 of peek-macos-aarch64" }
+        ]
+      }
+    ]
+  ]
+}

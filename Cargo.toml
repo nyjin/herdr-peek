@@ -1,8 +1,10 @@
 [package]
 name = "peek"
-version = "0.6.0"
+version = "0.0.0"
 edition = "2021"
 description = "herdr plugin: show a clicked or selected file or link, rendered by WebKit, in the pane beside it"
+license = "Apache-2.0"
+repository = "https://github.com/nyjin/herdr-peek"
 publish = false
 
 [dependencies]

@@ -95,20 +95,23 @@ peek auth github                           # GitHub 토큰(공개 저장소도 �
 ## 설치 / 제거
 
 ```sh
-git clone https://github.com/nyjin/herdr-skills && cd herdr-skills/herdr-plugins/peek
-cargo build --release                       # Rust 툴체인이 필요합니다. 릴리스 다운로드는 준비 중입니다
+git clone https://github.com/nyjin/herdr-peek && cd herdr-peek
+cargo build --release                       # Rust 툴체인이 필요합니다
 herdr plugin link "$PWD"                    # 설치
 herdr plugin uninstall nyjin.peek           # 제거
 ```
 
 macOS와 herdr 0.9.3 이상, Kitty 그래픽을 지원하는 터미널(Ghostty)이 필요합니다. pane 안의 그림은 herdr의 표준 Kitty 그래픽으로 그리며, herdr 0.9.5는 이 기능이 기본으로 켜져 있습니다.
 
-0.3.0까지는 이름이 glow-preview(`nyjin.glow-preview`)였습니다. 그것을 설치했다면 `herdr plugin uninstall nyjin.glow-preview`로 지운 뒤 peek을 설치하세요.
+릴리스(`vX.Y.Z`, `main`에 머지할 때마다 만들어짐)에는 macOS arm64 바이너리가 `peek-macos-aarch64`로 붙습니다. `bin/peek`은 지금도 체크아웃에서 빌드한 바이너리를 실행합니다.
+
+peek은 2026-11-17까지 [nyjin/herdr-skills](https://github.com/nyjin/herdr-skills)에 있었습니다(그곳의 버전은 0.6.0까지, 이 저장소의 릴리스는 0.1.0부터 다시 시작). 그곳에서 0.3.0까지는 이름이 glow-preview(`nyjin.glow-preview`)였습니다. 그것을 설치했다면 `herdr plugin uninstall nyjin.glow-preview`로 지운 뒤 peek을 설치하세요.
 
 ## 구성
 
-- `src/`: 크레이트 하나입니다. 플랫폼과 무관한 모듈(`target`, `resolve`, `state`, `herdr`, `link`, `page`, `script`, `fetch`, `kitty`, `term`)은 어디서나 빌드·테스트되고, `src/mac/`(WebKit 렌더러, 뷰어, 파일 감시, 키체인, 클립보드)은 macOS가 필요합니다.
-- `bin/peek`: 이 폴더에서 빌드한 바이너리를 실행합니다.
-- `tests/`: `cargo test`(`scripts/check.sh unit`이 실행합니다).
+- `src/`: 크레이트 하나입니다. 플랫폼과 무관한 모듈(`target`, `resolve`, `select`, `watcher`, `state`, `herdr`, `link`, `page`, `script`, `fetch`, `kitty`, `term`)은 어디서나 빌드·테스트되고, `src/mac/`(WebKit 렌더러, 뷰어, 파일 감시, 키체인, 클립보드)은 macOS가 필요합니다.
+- `bin/peek`: 이 체크아웃에서 빌드한 바이너리를 실행합니다.
+- 릴리스: `.releaserc.json`, `.github/workflows/release.yml`, `scripts/set-version.sh`(`CLAUDE.md`의 "Releases").
+- `tests/`: `cargo test`. 저장소가 `*.ko.md`와 테스트 밖에서 영어인지도 검사합니다.
 - `evals/`: 렌더링 실험과 측정 결과(`evals/results.md`). 스크린샷은 로컬에만 둡니다.
 - 설계: `docs/superpowers/specs/2026-11-15-peek-webkit-viewer-design.md`.

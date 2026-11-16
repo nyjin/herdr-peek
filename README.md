@@ -95,20 +95,23 @@ Run them with the plugin's binary: `<plugin folder>/bin/peek auth …`. Without 
 ## Install / remove
 
 ```sh
-git clone https://github.com/nyjin/herdr-skills && cd herdr-skills/herdr-plugins/peek
-cargo build --release                       # needs a Rust toolchain; release downloads are planned
+git clone https://github.com/nyjin/herdr-peek && cd herdr-peek
+cargo build --release                       # needs a Rust toolchain
 herdr plugin link "$PWD"                    # install
 herdr plugin uninstall nyjin.peek           # remove
 ```
 
 Requires macOS and herdr 0.9.3 or later in a terminal with Kitty graphics (Ghostty); pictures in panes need herdr's standard Kitty graphics, which herdr 0.9.5 turns on by default.
 
-Up to 0.3.0 the plugin was called glow-preview (`nyjin.glow-preview`). If you installed it, remove it with `herdr plugin uninstall nyjin.glow-preview`, then install peek.
+Releases (`vX.Y.Z`, made on every merge to `main`) carry the macOS arm64 binary as `peek-macos-aarch64`; `bin/peek` still runs the one built in the checkout.
+
+peek lived in [nyjin/herdr-skills](https://github.com/nyjin/herdr-skills) until 2026-11-17 (its versions there went up to 0.6.0; releases here start again at 0.1.0). Up to 0.3.0 there the plugin was called glow-preview (`nyjin.glow-preview`). If you installed it, remove it with `herdr plugin uninstall nyjin.glow-preview`, then install peek.
 
 ## Layout
 
-- `src/`: one crate. Platform-neutral modules (`target`, `resolve`, `state`, `herdr`, `link`, `page`, `script`, `fetch`, `kitty`, `term`) build and test anywhere; `src/mac/` (WebKit renderer, viewer, file watch, Keychain, clipboard) needs macOS.
-- `bin/peek`: runs the binary built in this folder.
-- `tests/`: `cargo test` (`scripts/check.sh unit` runs it).
+- `src/`: one crate. Platform-neutral modules (`target`, `resolve`, `select`, `watcher`, `state`, `herdr`, `link`, `page`, `script`, `fetch`, `kitty`, `term`) build and test anywhere; `src/mac/` (WebKit renderer, viewer, file watch, Keychain, clipboard) needs macOS.
+- `bin/peek`: runs the binary built in this checkout.
+- Releases: `.releaserc.json`, `.github/workflows/release.yml` and `scripts/set-version.sh` (`CLAUDE.md`, "Releases").
+- `tests/`: `cargo test`, which also checks that the repository is English outside `*.ko.md` files and tests.
 - `evals/`: the rendering spike and the measured results (`evals/results.md`); screenshots stay local.
 - Design: `docs/superpowers/specs/2026-11-15-peek-webkit-viewer-design.md`.
