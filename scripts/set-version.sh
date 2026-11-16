@@ -15,5 +15,5 @@ done
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || { echo "release builds run on macOS arm64" >&2; exit 1; }
 cargo build --release
 mkdir -p dist
-cp target/release/peek dist/peek-macos-aarch64
+cp "${CARGO_TARGET_DIR:-target}/release/peek" dist/peek-macos-aarch64
 (cd dist && shasum -a 256 peek-macos-aarch64 > peek-macos-aarch64.sha256)
