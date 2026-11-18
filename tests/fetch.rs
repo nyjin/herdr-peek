@@ -1,4 +1,4 @@
-//! Jira, Confluence and GitHub PR fetching against a local fake server (`tiny_http`) with an in-memory token store.
+//! GitHub PR fetching against a local fake server (`tiny_http`) with an in-memory token store.
 //! Nothing here talks to the real services or the Keychain.
 use peek::fetch::{self, Endpoints, FetchError, Fetched, TokenStore};
 use peek::target::Target;
@@ -36,10 +36,6 @@ struct Reply {
 
 fn json(status: u16, body: impl Into<Vec<u8>>) -> Reply {
     Reply { status, content_type: "application/json", body: body.into(), delay: Duration::ZERO }
-}
-
-fn png(body: &[u8]) -> Reply {
-    Reply { status: 200, content_type: "image/png", body: body.to_vec(), delay: Duration::ZERO }
 }
 
 fn fixture(name: &str) -> String {
@@ -90,7 +86,7 @@ impl Fake {
     }
 
     fn endpoints(&self) -> Endpoints {
-        Endpoints { atlassian_base: Some(self.base.clone()), github_api: self.base.clone(), timeout: Duration::from_millis(500) }
+        Endpoints { github_api: self.base.clone(), timeout: Duration::from_millis(500) }
     }
 }
 
@@ -116,39 +112,11 @@ impl TokenStore for Mem {
 }
 
 fn tokens() -> Mem {
-    Mem::with(&[("atlassian:example.atlassian.net", "me@example.com:secret-token1"), ("github", "gh-token")])
-}
-
-/// `printf 'me@example.com:secret-token1' | base64` (28 bytes: the encoding ends in padding)
-const BASIC: &str = "Basic bWVAZXhhbXBsZS5jb206c2VjcmV0LXRva2VuMQ==";
-const SCREEN_PNG: &[u8] = b"\x89PNG\r\n\x1a\nscreen";
-const DIAGRAM_PNG: &[u8] = b"\x89PNG\r\n\x1a\ndiagram";
-
-fn jira() -> Target {
-    Target::Jira { site: "https://example.atlassian.net".into(), key: "ABC-1".into() }
-}
-
-fn confluence() -> Target {
-    Target::Confluence {
-        site: "https://example.atlassian.net".into(),
-        page_id: Some("123456".into()),
-        url: "https://example.atlassian.net/wiki/spaces/OPS/pages/123456/Deploy+runbook".into(),
-    }
+    Mem::with(&[("github", "gh-token")])
 }
 
 fn pr() -> Target {
     Target::GithubPr { repo: "acme/app".into(), number: 42 }
-}
-
-fn atlassian(hit: &Hit) -> Reply {
-    match hit.path.as_str() {
-        "/rest/api/3/issue/ABC-1" => json(200, fixture("jira_issue.json")),
-        "/rest/api/3/issue/ABC-1/comment" => json(200, fixture("jira_comments.json")),
-        "/wiki/api/v2/pages/123456" => json(200, fixture("confluence_page.json")),
-        "/rest/api/3/attachment/content/1" => png(SCREEN_PNG),
-        "/wiki/download/attachments/123456/diagram.png" => png(DIAGRAM_PNG),
-        _ => json(404, r#"{"errorMessages":["Issue does not exist or you do not have permission to see it."],"errors":{}}"#),
-    }
 }
 
 fn github(hit: &Hit) -> Reply {
@@ -164,114 +132,6 @@ fn github(hit: &Hit) -> Reply {
 
 fn get(target: &Target, fake: &Fake, cache: &Path) -> Result<Fetched, FetchError> {
     fetch::fetch(target, &tokens(), cache, false, &fake.endpoints())
-}
-
-/// The `src` values of the page's `<img>` elements.
-fn img_srcs(html: &str) -> Vec<String> {
-    let re = regex::Regex::new(r#"<img\b[^>]*?\ssrc="([^"]*)""#).unwrap();
-    re.captures_iter(html).map(|c| c[1].to_string()).collect()
-}
-
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
-            i += 3;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).unwrap()
-}
-
-// ---- Jira -------------------------------------------------------------------------------------
-
-#[test]
-fn jira_requests_rendered_fields() {
-    let fake = Fake::start(atlassian);
-    let cache = tempfile::tempdir().unwrap();
-    let page = get(&jira(), &fake, cache.path()).unwrap();
-
-    let issue = fake.hits_to("/rest/api/3/issue/ABC-1");
-    assert_eq!(issue.len(), 1);
-    assert_eq!(issue[0].param("expand"), Some("renderedFields"));
-    assert_eq!(issue[0].param("fields"), Some("summary,status,assignee,description,comment"));
-    assert_eq!(issue[0].header("Authorization"), Some(BASIC));
-    // v3 leaves comment bodies in ADF under renderedFields; the comment endpoint renders them.
-    let comments = fake.hits_to("/rest/api/3/issue/ABC-1/comment");
-    assert_eq!(comments.len(), 1);
-    assert_eq!(comments[0].param("expand"), Some("renderedBody"));
-    assert_eq!(comments[0].header("Authorization"), Some(BASIC));
-
-    assert_eq!(page.title, "ABC-1 Login fails for <SSO> users");
-    assert_eq!(page.url, "https://example.atlassian.net/browse/ABC-1");
-    assert!(page.html.contains("In Progress"), "{}", page.html);
-    assert!(page.html.contains("Dana Kim (QA &amp; Ops)"), "{}", page.html);
-    assert!(page.html.contains("Steps to <strong>reproduce</strong>"), "{}", page.html);
-    assert!(page.html.contains("Lee Park"), "{}", page.html);
-    assert!(page.html.contains("<p>Seen on <em>staging</em> too</p>"), "{}", page.html);
-    assert!(regex::Regex::new(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$").unwrap().is_match(&page.fetched_at), "{}", page.fetched_at);
-}
-
-#[test]
-fn jira_comments_past_the_first_page_are_fetched() {
-    let fake = Fake::start(|hit: &Hit| {
-        if hit.path != "/rest/api/3/issue/ABC-1/comment" {
-            return atlassian(hit);
-        }
-        let start: usize = hit.param("startAt").unwrap_or("0").parse().unwrap();
-        let comments: Vec<_> = if start == 0 {
-            (0..100).map(|i| serde_json::json!({"id": i.to_string(), "author": {"displayName": "Bot"}, "created": "2026-11-01T10:00:00.000+0900", "renderedBody": format!("<p>comment {i}</p>")})).collect()
-        } else {
-            vec![serde_json::json!({"id": "100", "author": {"displayName": "Bot"}, "created": "2026-11-02T10:00:00.000+0900", "renderedBody": "<p>the last one</p>"})]
-        };
-        json(200, serde_json::json!({"startAt": start, "maxResults": 100, "total": 101, "comments": comments}).to_string())
-    });
-    let cache = tempfile::tempdir().unwrap();
-    let page = get(&jira(), &fake, cache.path()).unwrap();
-    let starts: Vec<String> =
-        fake.hits_to("/rest/api/3/issue/ABC-1/comment").iter().map(|h| h.param("startAt").unwrap_or("0").to_string()).collect();
-    assert_eq!(starts, ["0", "100"]);
-    assert!(page.html.contains("<p>comment 99</p>"));
-    assert!(page.html.contains("<p>the last one</p>"));
-}
-
-// ---- Confluence -------------------------------------------------------------------------------
-
-#[test]
-fn confluence_requests_view_body() {
-    let fake = Fake::start(atlassian);
-    let cache = tempfile::tempdir().unwrap();
-    let page = get(&confluence(), &fake, cache.path()).unwrap();
-
-    let hits = fake.hits_to("/wiki/api/v2/pages/123456");
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].param("body-format"), Some("view"));
-    assert_eq!(hits[0].header("Authorization"), Some(BASIC));
-    assert_eq!(page.title, "Deploy runbook");
-    assert_eq!(page.url, "https://example.atlassian.net/wiki/spaces/OPS/pages/123456/Deploy+runbook");
-    assert!(page.html.contains("<h2>Before you start</h2>"), "{}", page.html);
-}
-
-#[test]
-fn confluence_without_page_id_is_an_error_page() {
-    let fake = Fake::start(atlassian);
-    let cache = tempfile::tempdir().unwrap();
-    let target = Target::Confluence {
-        site: "https://example.atlassian.net".into(),
-        page_id: None,
-        url: "https://example.atlassian.net/wiki/x/QOIB".into(),
-    };
-    let err = get(&target, &fake, cache.path()).unwrap_err();
-    assert!(matches!(err, FetchError::Other(_)), "{err:?}");
-    assert!(fake.hits().is_empty());
-    let page = fetch::error_page(&err, &target);
-    assert_eq!(page.url, "https://example.atlassian.net/wiki/x/QOIB");
-    assert!(page.html.contains("page id"), "{}", page.html);
 }
 
 // ---- GitHub -----------------------------------------------------------------------------------
@@ -361,131 +221,77 @@ fn closed_draft_pr_shows_closed() {
     assert!(page.html.contains("<strong>Closed</strong>"), "{}", page.html);
 }
 
-// ---- attachments and links --------------------------------------------------------------------
-
-#[test]
-fn attachments_are_downloaded_with_the_token() {
-    let fake = Fake::start(atlassian);
-    let dir = tempfile::tempdir().unwrap();
-    // A space and Korean in the cache path: the file URLs in the page must be percent-encoded.
-    let cache = dir.path().join("cache 캐시");
-    let cases = [
-        (jira(), "/rest/api/3/attachment/content/1", "", SCREEN_PNG),
-        (confluence(), "/wiki/download/attachments/123456/diagram.png", "version=1&api=v2", DIAGRAM_PNG),
-    ];
-    for (target, path, query, bytes) in cases {
-        let page = get(&target, &fake, &cache).unwrap();
-        let hits = fake.hits_to(path);
-        assert_eq!(hits.len(), 1, "{path}");
-        assert_eq!(hits[0].header("Authorization"), Some(BASIC), "{path}");
-        assert_eq!(hits[0].query, query, "{path}");
-
-        let local: Vec<String> = img_srcs(&page.html).into_iter().filter(|s| s.starts_with("file://")).collect();
-        assert_eq!(local.len(), 1, "{}", page.html);
-        assert!(!local[0].contains(' '), "{}", local[0]);
-        let file = percent_decode(local[0].strip_prefix("file://").unwrap());
-        assert!(file.starts_with(cache.to_str().unwrap()) && file.ends_with(".png"), "{file}");
-        assert_eq!(std::fs::read(&file).unwrap(), bytes);
-    }
-}
-
-#[test]
-fn off_site_images_keep_their_address() {
-    let fake = Fake::start(atlassian);
-    let cache = tempfile::tempdir().unwrap();
-    let page = get(&jira(), &fake, cache.path()).unwrap();
-    let srcs = img_srcs(&page.html);
-    assert!(srcs.contains(&"https://cdn.example.invalid/logo.png".to_string()), "{srcs:?}");
-    assert!(srcs.contains(&"https://example.atlassian.net.invalid/steal.png".to_string()), "{srcs:?}");
-    assert!(fake.hits_to("/logo.png").is_empty());
-    assert!(fake.hits_to("/steal.png").is_empty());
-}
-
-#[test]
-fn relative_links_point_at_the_site() {
-    let fake = Fake::start(atlassian);
-    let cache = tempfile::tempdir().unwrap();
-    let issue = get(&jira(), &fake, cache.path()).unwrap();
-    assert!(issue.html.contains(r#"href="https://example.atlassian.net/browse/ABC-2""#), "{}", issue.html);
-    let wiki = get(&confluence(), &fake, cache.path()).unwrap();
-    assert!(wiki.html.contains(r#"href="https://example.atlassian.net/wiki/spaces/OPS/pages/123000/Checklist""#), "{}", wiki.html);
-}
-
 // ---- cache ------------------------------------------------------------------------------------
 
 #[test]
 fn cache_is_used_unless_fresh() {
-    let fake = Fake::start(atlassian);
+    let fake = Fake::start(github);
     let cache = tempfile::tempdir().unwrap();
     let ep = fake.endpoints();
-    let first = fetch::fetch(&confluence(), &tokens(), cache.path(), false, &ep).unwrap();
-    let again = fetch::fetch(&confluence(), &tokens(), cache.path(), false, &ep).unwrap();
-    assert_eq!(fake.hits_to("/wiki/api/v2/pages/123456").len(), 1);
+    let first = fetch::fetch(&pr(), &tokens(), cache.path(), false, &ep).unwrap();
+    let again = fetch::fetch(&pr(), &tokens(), cache.path(), false, &ep).unwrap();
+    assert_eq!(fake.hits_to("/repos/acme/app/pulls/42").len(), 1);
     assert_eq!(again, first);
-    fetch::fetch(&confluence(), &tokens(), cache.path(), true, &ep).unwrap();
-    assert_eq!(fake.hits_to("/wiki/api/v2/pages/123456").len(), 2);
+    fetch::fetch(&pr(), &tokens(), cache.path(), true, &ep).unwrap();
+    assert_eq!(fake.hits_to("/repos/acme/app/pulls/42").len(), 2);
 }
 
 #[test]
 fn unwritable_cache_does_not_fail_the_fetch() {
-    let fake = Fake::start(atlassian);
+    let fake = Fake::start(github);
     let dir = tempfile::tempdir().unwrap();
     let cache = dir.path().join("a-file");
     std::fs::write(&cache, "not a folder").unwrap();
-    let page = get(&confluence(), &fake, &cache).unwrap();
-    assert_eq!(page.title, "Deploy runbook");
+    let page = get(&pr(), &fake, &cache).unwrap();
+    assert_eq!(page.title, "acme/app#42 Add retry to uploads");
 }
 
 // ---- errors -----------------------------------------------------------------------------------
 
 #[test]
 fn no_token_points_to_peek_auth() {
-    let fake = Fake::start(|hit: &Hit| if hit.path.starts_with("/repos/") { github(hit) } else { atlassian(hit) });
+    let fake = Fake::start(github);
     let cache = tempfile::tempdir().unwrap();
-    let cases = [(jira(), "peek auth atlassian example.atlassian.net"), (pr(), "peek auth github")];
-    for (target, hint) in cases {
-        let err = fetch::fetch(&target, &Mem::default(), cache.path(), false, &fake.endpoints()).unwrap_err();
-        assert_eq!(err, FetchError::NoToken { hint: hint.into() });
-        assert!(fetch::error_page(&err, &target).html.contains(hint));
-    }
+    let err = fetch::fetch(&pr(), &Mem::default(), cache.path(), false, &fake.endpoints()).unwrap_err();
+    assert_eq!(err, FetchError::NoToken { hint: "peek auth github".into() });
+    assert!(fetch::error_page(&err, &pr()).html.contains("peek auth github"));
     assert!(fake.hits().is_empty());
 }
 
 #[test]
 fn unauthorized_points_to_peek_auth() {
-    let fake = Fake::start(|hit: &Hit| json(if hit.path.starts_with("/repos/") { 403 } else { 401 }, "{}"));
-    let cache = tempfile::tempdir().unwrap();
-    let cases = [(jira(), 401, "peek auth atlassian example.atlassian.net"), (pr(), 403, "peek auth github")];
-    for (target, code, hint) in cases {
-        let err = get(&target, &fake, cache.path()).unwrap_err();
+    for code in [401, 403] {
+        let fake = Fake::start(move |_: &Hit| json(code, "{}"));
+        let cache = tempfile::tempdir().unwrap();
+        let err = get(&pr(), &fake, cache.path()).unwrap_err();
         assert!(matches!(err, FetchError::Http { status, .. } if status == code), "{err:?}");
-        let page = fetch::error_page(&err, &target);
-        assert!(page.html.contains(hint), "{}", page.html);
+        let page = fetch::error_page(&err, &pr());
+        assert!(page.html.contains("peek auth github"), "{}", page.html);
         assert!(page.html.contains(&code.to_string()), "{}", page.html);
     }
 }
 
 #[test]
 fn not_found_page() {
-    let fake = Fake::start(|_: &Hit| json(404, r#"{"errorMessages":["Issue does not exist or you do not have permission to see it."]}"#));
+    let fake = Fake::start(|_: &Hit| json(404, r#"{"message":"Not Found","status":"404"}"#));
     let cache = tempfile::tempdir().unwrap();
-    let err = get(&jira(), &fake, cache.path()).unwrap_err();
+    let err = get(&pr(), &fake, cache.path()).unwrap_err();
     assert!(matches!(err, FetchError::Http { status: 404, .. }), "{err:?}");
-    let page = fetch::error_page(&err, &jira());
-    assert!(page.title.contains("ABC-1"), "{}", page.title);
+    let page = fetch::error_page(&err, &pr());
+    assert!(page.title.contains("acme/app#42"), "{}", page.title);
     assert!(page.html.to_lowercase().contains("not found"), "{}", page.html);
-    assert_eq!(page.url, "https://example.atlassian.net/browse/ABC-1");
+    assert_eq!(page.url, "https://github.com/acme/app/pull/42");
 }
 
 #[test]
 fn timeout_gives_error_page() {
-    let fake = Fake::start(|hit: &Hit| Reply { delay: Duration::from_secs(3), ..atlassian(hit) });
+    let fake = Fake::start(|hit: &Hit| Reply { delay: Duration::from_secs(3), ..github(hit) });
     let cache = tempfile::tempdir().unwrap();
     let start = Instant::now();
-    let err = get(&jira(), &fake, cache.path()).unwrap_err();
+    let err = get(&pr(), &fake, cache.path()).unwrap_err();
     assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
     assert_eq!(err, FetchError::Timeout);
-    let page = fetch::error_page(&err, &jira());
+    let page = fetch::error_page(&err, &pr());
     assert!(page.html.contains("in time"), "{}", page.html);
 }
 
@@ -493,11 +299,11 @@ fn timeout_gives_error_page() {
 fn unreachable_gives_error_page() {
     // Port 1 (tcpmux) has no listener; a freed ephemeral port could be taken by another test's fake server.
     let base = "http://127.0.0.1:1".to_string();
-    let ep = Endpoints { atlassian_base: Some(base.clone()), github_api: base, timeout: Duration::from_millis(500) };
+    let ep = Endpoints { github_api: base, timeout: Duration::from_millis(500) };
     let cache = tempfile::tempdir().unwrap();
-    let err = fetch::fetch(&jira(), &tokens(), cache.path(), false, &ep).unwrap_err();
+    let err = fetch::fetch(&pr(), &tokens(), cache.path(), false, &ep).unwrap_err();
     assert!(matches!(err, FetchError::Other(_)), "{err:?}");
-    assert!(fetch::error_page(&err, &jira()).html.contains("Could not reach"));
+    assert!(fetch::error_page(&err, &pr()).html.contains("Could not reach"));
 }
 
 // ---- peek auth --------------------------------------------------------------------------------
@@ -543,9 +349,9 @@ fn auth_reads_secret_from_stdin() {
     assert!(stderr.contains("token"), "{stderr}");
     assert!(!stderr.contains("ghp-secret-1"), "{stderr}");
 
-    let (stored, stderr) = auth_child("atlassian https://example.atlassian.net/", "me@example.com\nat-secret-2\n");
-    assert_eq!(stored, "ok atlassian:example.atlassian.net=me@example.com:at-secret-2");
-    assert!(!stderr.contains("at-secret-2"), "{stderr}");
+    // Jira and Confluence were removed (2026-11-18): an Atlassian site is no longer taken.
+    let (stored, _) = auth_child("atlassian https://example.atlassian.net/", "me@example.com\nat-secret-2\n");
+    assert_eq!(stored, "err true stored=0");
 
     let (stored, _) = auth_child("github", "\n");
     assert_eq!(stored, "err true stored=0");

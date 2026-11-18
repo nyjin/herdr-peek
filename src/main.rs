@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 
 const USAGE: &str = "Usage: peek link | action <name> | viewer [<file>] | watch [--spawn] | select <text> \
-                     | auth atlassian <site> | auth github";
+                     | auth github";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

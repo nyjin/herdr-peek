@@ -202,9 +202,9 @@ fn browser_page_uses_absolute_urls() {
 
 fn fetched() -> Fetched {
     Fetched {
-        title: "PROJ-1 Fix the <parser>".into(),
+        title: "acme/app#1 Fix the <parser>".into(),
         html: "<p>The body</p>".into(),
-        url: "https://acme.atlassian.net/browse/PROJ-1".into(),
+        url: "https://github.com/acme/app/pull/1".into(),
         fetched_at: "2026-11-15T22:14:43+09:00".into(),
     }
 }
@@ -212,10 +212,10 @@ fn fetched() -> Fetched {
 #[test]
 fn fetched_doc_page_shows_title_and_fetch_time() {
     let page = build(&Doc::Fetched(fetched()), &rendered()).unwrap();
-    assert!(page.contains("PROJ-1 Fix the &lt;parser&gt;"), "{page}");
+    assert!(page.contains("acme/app#1 Fix the &lt;parser&gt;"), "{page}");
     assert!(page.contains("2026-11-15T22:14:43+09:00"));
     assert!(page.contains("<p>The body</p>"));
-    assert!(page.contains("https://acme.atlassian.net/browse/PROJ-1"));
+    assert!(page.contains("https://github.com/acme/app/pull/1"));
     assert!(page.contains(CSP));
 
     let source = build(&Doc::Fetched(fetched()), &opts(true, Mode::Source, None)).unwrap();

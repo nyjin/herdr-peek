@@ -2,7 +2,7 @@ id = "nyjin.peek"
 name = "peek"
 version = "0.1.0"
 min_herdr_version = "0.9.3"
-description = "Select a path, or Ctrl+click a Jira, Confluence or GitHub PR address or a hyperlink, to read it, rendered by WebKit, in the pane beside it"
+description = "Select a path, or Ctrl+click a GitHub PR address or a hyperlink, to read it, rendered by WebKit, in the pane beside it"
 platforms = ["macos"]
 
 # The viewer runs from the plugin root by absolute path: the pane's cwd is the source pane's folder.
@@ -99,18 +99,6 @@ action = "open-link"
 id = "page"
 title = "Open in peek (page or image)"
 pattern = '(?i)[^\s]*\.(html?|png|jpe?g|gif|webp|svg)\b'
-action = "open-link"
-
-[[link_handlers]]
-id = "jira"
-title = "Open Jira issue in peek"
-pattern = 'https://[^/\s]+\.atlassian\.net/browse/[A-Z][A-Z0-9]+-\d+'
-action = "open-link"
-
-[[link_handlers]]
-id = "confluence"
-title = "Open Confluence page in peek"
-pattern = 'https://[^/\s]+\.atlassian\.net/wiki/\S+'
 action = "open-link"
 
 [[link_handlers]]

@@ -19,7 +19,7 @@ macOS에 들어 있는 WebKit이 화면 밖에서 페이지를 그리고, 그 �
 
 **링크를 Control + 클릭하기:** herdr는 **Control**을 누른 채 클릭할 때만 클릭을 플러그인에 넘깁니다. macOS에서도 마찬가지입니다. herdr가 받는 마우스 신호로는 Command와 그냥 클릭을 구별할 수 없기 때문입니다. 넘기는 대상도 두 가지뿐입니다.
 
-- 그냥 글자로 출력된 웹 주소(`http://`, `https://`): Jira, Confluence, GitHub PR 주소는 peek에서, 그 밖의 주소는 브라우저에서 열립니다.
+- 그냥 글자로 출력된 웹 주소(`http://`, `https://`): GitHub PR 주소는 peek에서, 그 밖의 주소(Jira, Confluence 포함)는 브라우저에서 열립니다.
 - 프로그램이 출력한 하이퍼링크(OSC 8): 주소가 무엇이든 넘깁니다. `file:///Users/me/a.md`, `docs/a.md`, `src/app.rs:42` 모두 됩니다.
 
 그냥 글자로 출력된 경로는 클릭할 수 없습니다. herdr가 그냥 글자에서는 경로를 찾지 않기 때문입니다([herdr discussion #609](https://github.com/herdrdev/herdr/discussions/609)에 요청이 올라와 있습니다). 그런 경로는 선택해서 여세요. 클릭하려면 herdr의 마우스 캡처(`ui.mouse_capture`, 기본으로 켜져 있음)도 켜져 있어야 합니다.
@@ -29,8 +29,6 @@ macOS에 들어 있는 WebKit이 화면 밖에서 페이지를 그리고, 그 �
 | `.md`·`.markdown` 경로 | 렌더링한 마크다운(표, 체크리스트, 각주, 이미지). `v`로 원문 전환 |
 | 소스 경로(`.py` `.java` `.kt` `.ts` `.rs` …). 끝에 `:줄`이 있으면 그 줄로 이동해 표시 | 줄 번호가 붙은 문법 강조 소스 |
 | 이미지(`.png` `.jpg` `.gif` `.webp` `.svg`)나 `.html` 파일 | 이미지, 또는 자체 스타일을 그대로 적용한 페이지 |
-| Jira `…atlassian.net/browse/KEY` | 요약, 상태, 담당자, 설명, 댓글 |
-| Confluence `…atlassian.net/wiki/…/pages/<id>` | 페이지 본문 |
 | GitHub PR `github.com/<o>/<r>/pull/<n>` | 제목, 상태, 설명, 댓글 |
 
 - 줄여 쓴 경로(`docs/a.md`, `…/deep/a.md`, `a.md`)는 네 곳에서 한꺼번에 찾습니다. pane의 작업 폴더, 세션 scratchpad, 세션 기록(transcript), git 저장소입니다. 하나면 바로 열고, 여럿이면 번호 목록을 보여 주고, 없으면 herdr 알림을 띄웁니다.
@@ -67,16 +65,15 @@ type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
 
-## Jira, Confluence, GitHub 토큰
+## GitHub 토큰
 
-링크는 각 서비스의 API로 받아 오기 때문에, 서비스마다 토큰을 한 번 등록해야 합니다. 토큰은 macOS 키체인(서비스 이름 `peek`)에 저장됩니다.
+PR은 GitHub API로 받아 오기 때문에 토큰을 한 번 등록해야 합니다. 토큰은 macOS 키체인(서비스 이름 `peek`)에 저장됩니다.
 
 ```sh
-peek auth atlassian <site>.atlassian.net   # 이메일, 그다음 API 토큰(id.atlassian.com → Security → API tokens)
-peek auth github                           # GitHub 토큰(공개 저장소도 필요합니다)
+peek auth github   # GitHub 토큰(공개 저장소도 필요합니다)
 ```
 
-플러그인의 바이너리로 실행합니다: `<플러그인 폴더>/bin/peek auth …`. 토큰이 없으면 뷰어가 실행할 명령을 알려 줍니다. 실행한 뒤 `r`을 누르세요.
+플러그인의 바이너리로 실행합니다: `<플러그인 폴더>/bin/peek auth github`. 토큰이 없으면 뷰어가 실행할 명령을 알려 줍니다. 실행한 뒤 `r`을 누르세요.
 
 ## 파일이 놓이는 곳
 
@@ -87,7 +84,7 @@ peek auth github                           # GitHub 토큰(공개 저장소도 �
   pages/                                  뷰어가 불러오는 페이지
   viewer.log                              마지막 뷰어 실행의 시간 기록과 오류
 ~/.local/state/peek/                      뷰어마다 보여 줄 것, 확대 배율, 선택해서 열기 설정, watch.log
-~/.cache/peek/links/                      받아 온 Jira, Confluence, PR 페이지와 이미지
+~/.cache/peek/links/                      받아 온 PR 페이지
 ```
 
 `/tmp`는 재시작할 때 비워질 수 있습니다. 남겨 둘 스크린샷은 다른 곳으로 옮기세요.

@@ -8,8 +8,8 @@
 ## Purpose
 
 A click on a path or link in a Claude Code pane shows it, rendered like a web page, in the pane to the right of that
-Claude pane: markdown, source code, images, HTML, and Jira, Confluence and GitHub PR content. Nothing has to be
-installed besides the plugin itself (the old version needed glow, bat, acli, jira-cli, cme and gh).
+Claude pane: markdown, source code, images, HTML, and GitHub PR content (Jira and Confluence too until 2026-11-18:
+"Jira and Confluence removed" below). Nothing has to be installed besides the plugin itself (the old version needed glow, bat, acli, jira-cli, cme and gh).
 
 ## User decisions (2026-11-15)
 
@@ -25,7 +25,7 @@ installed besides the plugin itself (the old version needed glow, bat, acli, jir
 - Links inside a rendered page: a local file opens in peek (with back); a web address opens in the default browser.
 - File types: markdown, source, images, SVG and HTML. PDF only if it renders well (left out of 0.5.0).
 - Jira, Confluence and GitHub PR content is fetched through each service's API with a token that the user registers
-  with `peek auth`, and shown in the pane.
+  with `peek auth`, and shown in the pane. (Jira and Confluence were removed on 2026-11-18.)
 - Screenshots go under `/tmp` (layout below).
 - Theme follows the system (dark/light); the page's font size follows the terminal's; zoom 50-200 % in 10 % steps,
   remembered.
@@ -48,7 +48,7 @@ Stays: one viewer per Claude pane, opened with `herdr plugin pane open --placeme
 - macOS (WebKit through objc2). herdr ≥ 0.9.3 (`link_handlers`, `plugin pane open --env`; standard Kitty graphics
   in panes since 0.9.2). Kitty graphics are on by default in herdr 0.9.5 (`[terminal] kitty_graphics`).
 - A terminal with Kitty graphics outside herdr (Ghostty).
-- No other tool. Tokens for Jira/Confluence/GitHub are needed only for those links.
+- No other tool. A GitHub token is needed only for PR links.
 
 ## Binary and plugin layout
 
@@ -63,7 +63,7 @@ herdr-peek/                (repository root)
 
 Subcommands: `peek link` (link handler action), `peek action <name>` (herdr actions: toggle, reload, find, zoom-in,
 zoom-out, zoom-reset, screenshot, browser, back; and select-to-open, the switch), `peek viewer` (the pane), `peek auth
-<service>` (token registration); since 0.6.0 `peek watch [--spawn]` (the select-to-open watcher, or start it detached)
+github` (token registration); since 0.6.0 `peek watch [--spawn]` (the select-to-open watcher, or start it detached)
 and `peek select <text>` (one selection through select to open, as the watcher would; for tests and by hand).
 
 Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-only ones sit behind
@@ -74,10 +74,10 @@ Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-onl
 | `resolve` | clicked text → candidates (rules below) | neutral |
 | `select` | select to open: clipboard text → source pane → files ("Select to open") | neutral |
 | `watcher` | the select-to-open watcher: clipboard polling, lock, lifetime; the pasteboard reader is in `mac/clipboard` | neutral loop, macOS pasteboard |
-| `target` | classify: Jira, Confluence, PR, path with `:line` | neutral |
+| `target` | classify: PR, path with `:line` | neutral |
 | `state` | state files, viewer bookkeeping, zoom preference, `/tmp` layout | neutral |
 | `page` | markdown/source/image/HTML/API content → page HTML (template, theme, CSP) | neutral |
-| `fetch` | REST calls, attachments, link cache | neutral (HTTP client) |
+| `fetch` | GitHub REST calls, link cache | neutral (HTTP client) |
 | `herdr` | calls to the herdr CLI | neutral |
 | `render` | hidden `WKWebView`: load, readiness, capture, zoom, find, hit-test | macOS |
 | `kitty` | tiles, shared memory transmission, placements | neutral encoding, macOS shared memory |
@@ -204,25 +204,22 @@ draws one row shorter while the toast stands. No herdr notification (user reques
 
 ## Open in browser
 
-A local document: write its page with absolute `file://` references to `browser/` and run `open`. A Jira,
-Confluence or PR view: open the original URL.
+A local document: write its page with absolute `file://` references to `browser/` and run `open`. A PR view:
+open the original URL.
 
 ## File changes
 
 Subscribe to file change events (FSEvents) for the shown file's folder; react to the file (writes, atomic renames).
 Debounce 300 ms; reload and keep the reading position.
 
-## Jira, Confluence, GitHub PR
+## GitHub PR
 
 | Link | Call | Page |
 |---|---|---|
-| `https://<site>.atlassian.net/browse/KEY` | `GET /rest/api/3/issue/KEY?expand=renderedFields&fields=summary,status,assignee,description,comment` | summary, status, assignee, rendered description and comments |
-| `https://<site>.atlassian.net/wiki/.../pages/<id>` | `GET /wiki/api/v2/pages/<id>?body-format=view` | title and rendered body |
 | `https://github.com/<o>/<r>/pull/<n>` | `GET /repos/<o>/<r>/pulls/<n>`, issue and review comments, `Accept: application/vnd.github.html+json` | title, state, `body_html`, comments |
 
-- Tokens: `peek auth atlassian <site>` (email and API token, Basic auth), `peek auth github` (token, Bearer), stored in
-  the macOS Keychain. peek does not read other tools' credentials.
-- Images that need the token (Jira and Confluence attachments) are downloaded with it and referenced as local files.
+- Token: `peek auth github` (token, Bearer), stored in the macOS Keychain. peek does not read other tools'
+  credentials.
 - Fetched pages are cached in `~/.cache/peek/links/` with the fetch time; `r` fetches again.
 - Failures show a page with the cause and the fix: no token (`peek auth ...`), 401/403, 404, timeout.
 
@@ -389,3 +386,38 @@ history before the rename stays there). The plugin is the repository root, so `h
 Checks are `cargo test` alone: the language rule became `tests/language.rs` (no Python). Releases are made by
 semantic-release on every push to `main` (`CLAUDE.md`, "Releases"); a `v0.0.0` tag on the initial commit makes the
 first release 0.1.0.
+
+## Jira and Confluence removed (2026-11-18)
+
+User decision: take Jira and Confluence out now and review them again later. GitHub PRs stay.
+
+How it came to this: looking at the approach again, the Atlassian path (REST API with a token from
+`peek auth atlassian <site>`) had never been run with a real token (`evals/results.md`: "fetching with real tokens
+(none registered)"), and no token was registered. After trying a click without a token in a separate herdr session,
+the user decided to take it out and review it later.
+
+Now: an Atlassian address is a plain web address. A Ctrl+click on one goes to the browser like any other address;
+selecting one opens nothing (select to open takes paths only). `peek auth atlassian` is no longer accepted. A viewer
+whose state still holds an Atlassian link shows "… is not a GitHub PR link."
+
+Removed: the `jira` and `confluence` link handlers, `Target::Jira` and `Target::Confluence`, `src/fetch/jira.rs`,
+`src/fetch/confluence.rs`, the Atlassian client, token and auth prompt, and the download of images that need the token
+(`localize` and its helpers in `src/fetch/mod.rs`, the attachment folder in the link cache), with their tests and
+fixtures. All of it is in the history before this change.
+
+For the review:
+
+- Approach as built: Jira `GET /rest/api/3/issue/<KEY>?expand=renderedFields&fields=summary,status,assignee,description,comment`
+  plus paged `GET /rest/api/3/issue/<KEY>/comment?expand=renderedBody`; Confluence
+  `GET /wiki/api/v2/pages/<id>?body-format=view`. Both answer with rendered HTML, which suits the WebKit page. Basic
+  auth with the account email and an API token, per site, in the Keychain (`atlassian:<host>`).
+- The earlier way (2026-11-13 design): acli, jira-cli, cme, then the Atlassian MCP through `claude -p`. acli answers
+  with ADF (a converter is needed), cme took 1.7-6 s and up to 121 s for a page, MCP 13-30 s and costs usage.
+- Link shapes in past sessions (about 400 distinct Atlassian addresses): about 180 `/browse/<KEY>`, about 120
+  `/wiki/spaces/<space>/pages/<id>/…`; the old patterns covered these. Not covered: tiny links (`/wiki/x/…`),
+  `/wiki/pages/viewpage.action?pageId=<id>` and space home pages, a few each.
+- API tokens appear to be allowed on the site in use (another tool there works with one); a site whose admins block
+  API tokens would need OAuth (acli, MCP) instead.
+- Not checked here: a token created with scopes is said to work only through `api.atlassian.com/ex/...`, not the
+  site's own address that peek called; Atlassian API tokens are said to expire (at most a year). The 401 page covered
+  an expired token.

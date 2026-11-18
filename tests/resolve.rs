@@ -166,19 +166,11 @@ fn resolves_path_with_space_and_korean() {
 
 #[test]
 fn classify_targets() {
-    let jira = classify("https://example.atlassian.net/browse/ABC-12?focusedCommentId=5).");
-    assert_eq!(jira, Target::Jira { site: "https://example.atlassian.net".into(), key: "ABC-12".into() });
-    assert_eq!(jira.url().as_deref(), Some("https://example.atlassian.net/browse/ABC-12"));
-
-    let page = "https://example.atlassian.net/wiki/spaces/X/pages/12345/Title";
-    let conf = classify(page);
-    assert_eq!(
-        conf,
-        Target::Confluence { site: "https://example.atlassian.net".into(), page_id: Some("12345".into()), url: page.into() }
-    );
-    assert_eq!(conf.url().as_deref(), Some(page));
-    let no_id = classify("https://example.atlassian.net/wiki/x/AbCd");
-    assert!(matches!(no_id, Target::Confluence { page_id: None, .. }));
+    // Jira and Confluence were removed (2026-11-18): their addresses are plain web addresses, which go to the browser.
+    for web in ["https://example.atlassian.net/browse/ABC-12", "https://example.atlassian.net/wiki/spaces/X/pages/12345/Title"] {
+        assert_eq!(classify(web), Target::Path { text: web.into(), line: None });
+        assert_eq!(classify(web).url(), None);
+    }
 
     let pr = classify("https://github.com/o/r/pull/12/files");
     assert_eq!(pr, Target::GithubPr { repo: "o/r".into(), number: 12 });

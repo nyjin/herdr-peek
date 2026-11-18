@@ -19,7 +19,7 @@ macOS's own WebKit renders the page out of sight, and the picture is shown in th
 
 **Ctrl+click a link.** herdr passes a click to a plugin only while you hold **Control** (on macOS too: the mouse reports herdr gets cannot tell Command from a plain click), and only on two kinds of text:
 
-- a web address (`http://`, `https://`) printed as plain text: Jira, Confluence and GitHub PR addresses open in peek, other addresses in the browser;
+- a web address (`http://`, `https://`) printed as plain text: GitHub PR addresses open in peek, other addresses (Jira and Confluence among them) in the browser;
 - a hyperlink (OSC 8) that a program printed, whatever its target: `file:///Users/me/a.md`, `docs/a.md`, `src/app.rs:42`.
 
 A path printed as plain text is not clickable, because herdr does not look for paths in plain text (requested in [herdr discussion #609](https://github.com/herdrdev/herdr/discussions/609)); select it instead. Clicks also need herdr's mouse capture (`ui.mouse_capture`, on by default).
@@ -29,8 +29,6 @@ A path printed as plain text is not clickable, because herdr does not look for p
 | a `.md` / `.markdown` path | rendered markdown (tables, task lists, footnotes, images); `v` switches to the source |
 | a source path (`.py` `.java` `.kt` `.ts` `.rs` …); a trailing `:line` jumps to and marks that line | highlighted source with line numbers |
 | an image (`.png` `.jpg` `.gif` `.webp` `.svg`) or an `.html` file | the image, or the page with its own styles |
-| Jira `…atlassian.net/browse/KEY` | summary, status, assignee, description and comments |
-| Confluence `…atlassian.net/wiki/…/pages/<id>` | the page body |
 | GitHub PR `github.com/<o>/<r>/pull/<n>` | title, state, description and comments |
 
 - A shortened path (`docs/a.md`, `…/deep/a.md`, `a.md`) is looked up in four places at once: the pane's working folder, the session scratchpad, the session transcript and the git checkout. One candidate opens directly; several show a numbered list; none gives a herdr notification.
@@ -67,16 +65,15 @@ type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
 
-## Jira, Confluence and GitHub tokens
+## GitHub token
 
-Links are fetched through each service's API, so peek needs a token once per service. It is kept in the macOS Keychain (service `peek`).
+PRs are fetched through the GitHub API, so peek needs a token once. It is kept in the macOS Keychain (service `peek`).
 
 ```sh
-peek auth atlassian <site>.atlassian.net   # your email, then an API token (id.atlassian.com → Security → API tokens)
-peek auth github                           # a GitHub token (public repositories need one too)
+peek auth github   # a GitHub token (public repositories need one too)
 ```
 
-Run them with the plugin's binary: `<plugin folder>/bin/peek auth …`. Without a token the viewer shows the command to run; press `r` after running it.
+Run it with the plugin's binary: `<plugin folder>/bin/peek auth github`. Without a token the viewer shows the command to run; press `r` after running it.
 
 ## Where things go
 
@@ -87,7 +84,7 @@ Run them with the plugin's binary: `<plugin folder>/bin/peek auth …`. Without 
   pages/                                  pages the viewer loads
   viewer.log                              timings and errors of the last viewer run
 ~/.local/state/peek/                      what each viewer shows, the zoom, the select-to-open switch, watch.log
-~/.cache/peek/links/                      fetched Jira, Confluence and PR pages and their images
+~/.cache/peek/links/                      fetched PR pages
 ```
 
 `/tmp` may be emptied on restart: copy screenshots you want to keep.

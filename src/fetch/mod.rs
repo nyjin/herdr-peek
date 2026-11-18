@@ -1,20 +1,17 @@
-//! Jira, Confluence and GitHub PR content through each service's REST API, with tokens from a `TokenStore`
-//! (`peek auth`), cached under `~/.cache/peek/links/`.
+//! GitHub PR content through the GitHub REST API, with a token from a `TokenStore` (`peek auth github`), cached
+//! under `~/.cache/peek/links/`. Jira and Confluence were removed on 2026-11-18, to be reviewed again later (see the
+//! design doc).
 //!
 //! `Fetched.title` is plain text; `Fetched.html` is a body fragment for peek's page template, which shows the title
-//! and the fetch time itself. Every request goes to a configured base (the link's site, `Endpoints`) plus a path;
-//! a URL found in fetched content never reaches the HTTP client, so the token stays on its own site.
+//! and the fetch time itself. Every request goes to a configured base (`Endpoints`) plus a path; a URL found in
+//! fetched content never reaches the HTTP client, so the token stays on its own site.
 use crate::target::Target;
-use regex::{Captures, Regex};
-use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub mod cache;
-pub mod confluence;
 pub mod github;
-pub mod jira;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fetched {
@@ -35,7 +32,7 @@ pub enum FetchError {
     Other(String),
 }
 
-/// Keys: `atlassian:<host>` holds `<email>:<api token>`; `github` holds a token.
+/// Key `github` holds a GitHub token.
 pub trait TokenStore {
     fn get(&self, key: &str) -> Option<String>;
     fn set(&self, key: &str, value: &str) -> io::Result<()>;
@@ -43,37 +40,27 @@ pub trait TokenStore {
 
 #[derive(Clone, Debug)]
 pub struct Endpoints {
-    /// Replaces the site taken from the link (tests point it at a local server).
-    pub atlassian_base: Option<String>,
-    /// `https://api.github.com` in use.
+    /// `https://api.github.com` in use (tests point it at a local server).
     pub github_api: String,
     pub timeout: Duration,
 }
 
 impl Default for Endpoints {
     fn default() -> Self {
-        Endpoints { atlassian_base: None, github_api: "https://api.github.com".into(), timeout: Duration::from_secs(20) }
+        Endpoints { github_api: "https://api.github.com".into(), timeout: Duration::from_secs(20) }
     }
 }
 
 /// The page content for a link target; the cached copy unless `fresh`.
 pub fn fetch(target: &Target, tokens: &dyn TokenStore, cache: &Path, fresh: bool, ep: &Endpoints) -> Result<Fetched, FetchError> {
     let url = target.url()
-        .ok_or_else(|| FetchError::Other(format!("{} is not a Jira, Confluence or GitHub PR link.", name(target))))?;
+        .ok_or_else(|| FetchError::Other(format!("{} is not a GitHub PR link.", name(target))))?;
     if !fresh {
         if let Some(page) = cache::load(cache, &url) {
             return Ok(page);
         }
     }
-    let files = cache::files_dir(cache, &url);
     let (title, html) = match target {
-        Target::Jira { site, key } => jira::fetch(&atlassian(site, tokens, ep)?, site, key, &files)?,
-        Target::Confluence { site, page_id: Some(id), .. } => confluence::fetch(&atlassian(site, tokens, ep)?, site, id, &files)?,
-        Target::Confluence { page_id: None, .. } => {
-            return Err(FetchError::Other(
-                "This Confluence link does not name a page id, so peek cannot ask the API for it.".into(),
-            ))
-        }
         Target::GithubPr { repo, number } => github::fetch(&github_client(tokens, ep)?, repo, *number)?,
         Target::Path { .. } => unreachable!("a path has no web address"),
     };
@@ -125,29 +112,13 @@ pub fn error_page(err: &FetchError, target: &Target) -> Fetched {
     Fetched { title: format!("Could not fetch {}", name(target)), html, url, fetched_at: now() }
 }
 
-/// `peek auth atlassian <site>` (email and API token) or `peek auth github` (token); secrets come from stdin.
+/// `peek auth github`: the token comes from stdin.
 pub fn run_auth(args: &[String], tokens: &dyn TokenStore) -> io::Result<()> {
-    let usage = || io::Error::new(io::ErrorKind::InvalidInput, "Usage: peek auth atlassian <site> | peek auth github");
+    let usage = || io::Error::new(io::ErrorKind::InvalidInput, "Usage: peek auth github");
     let missing = || io::Error::new(io::ErrorKind::InvalidInput, "nothing was entered; nothing was saved");
     match args {
-        [service, site] if service == "atlassian" => {
-            let host = host_of(site);
-            if host.is_empty() {
-                return Err(usage());
-            }
-            let email = read_line(&format!("Atlassian account email for {host}: "), true)?;
-            let token = read_line(
-                "API token (create one at https://id.atlassian.com/manage-profile/security/api-tokens): ",
-                false,
-            )?;
-            if email.is_empty() || token.is_empty() {
-                return Err(missing());
-            }
-            tokens.set(&format!("atlassian:{host}"), &format!("{email}:{token}"))?;
-            eprintln!("Saved the token for {host}.");
-        }
         [service] if service == "github" => {
-            let token = read_line("GitHub token with read access to the repositories: ", false)?;
+            let token = read_secret("GitHub token with read access to the repositories: ")?;
             if token.is_empty() {
                 return Err(missing());
             }
@@ -164,9 +135,6 @@ pub fn run_auth(args: &[String], tokens: &dyn TokenStore) -> io::Result<()> {
 /// The link's web address (what `o` opens and what the cache is keyed by).
 fn name(target: &Target) -> String {
     match target {
-        Target::Jira { key, .. } => key.clone(),
-        Target::Confluence { page_id: Some(id), .. } => format!("Confluence page {id}"),
-        Target::Confluence { page_id: None, .. } => "this Confluence page".into(),
         Target::GithubPr { repo, number } => format!("{repo}#{number}"),
         Target::Path { text, .. } => text.clone(),
     }
@@ -174,26 +142,15 @@ fn name(target: &Target) -> String {
 
 fn auth_hint(target: &Target) -> Option<String> {
     match target {
-        Target::Jira { site, .. } | Target::Confluence { site, .. } => Some(format!("peek auth atlassian {}", host_of(site))),
         Target::GithubPr { .. } => Some("peek auth github".into()),
         Target::Path { .. } => None,
     }
 }
 
-/// `https://Example.atlassian.net/wiki` → `example.atlassian.net`.
+/// `https://API.github.com/repos` → `api.github.com`.
 fn host_of(site: &str) -> String {
     let rest = site.strip_prefix("https://").or_else(|| site.strip_prefix("http://")).unwrap_or(site);
     rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase()
-}
-
-fn atlassian(site: &str, tokens: &dyn TokenStore, ep: &Endpoints) -> Result<Client, FetchError> {
-    let host = host_of(site);
-    let secret = tokens
-        .get(&format!("atlassian:{host}"))
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| FetchError::NoToken { hint: format!("peek auth atlassian {host}") })?;
-    let base = ep.atlassian_base.as_deref().unwrap_or(site);
-    Ok(Client::new(ep, base, format!("Basic {}", base64(secret.as_bytes())), "application/json", None))
 }
 
 fn github_client(tokens: &dyn TokenStore, ep: &Endpoints) -> Result<Client, FetchError> {
@@ -226,7 +183,7 @@ impl Client {
         let agent = ureq::AgentBuilder::new()
             .timeout(ep.timeout)
             .user_agent("peek")
-            // A redirect (Jira attachments go to a signed media URL) never carries the token on.
+            // A redirect never carries the token on.
             .redirect_auth_headers(ureq::RedirectAuthHeaders::Never)
             .build();
         Client { agent, base: base.trim_end_matches('/').to_string(), auth, accept, extra }
@@ -277,138 +234,15 @@ fn timed_out(t: &ureq::Transport) -> bool {
     false
 }
 
-// ---- Atlassian HTML ---------------------------------------------------------------------------
-
-/// Images on the site are downloaded with the token into `files` and referenced as file URLs (the page cannot send
-/// the token); links relative to the site become absolute so they open in the browser.
-pub(crate) fn localize(html: &str, site: &str, client: &Client, files: &Path) -> String {
-    let host = host_of(site);
-    let img = Regex::new(r#"(?i)(<img\b[^>]*?\ssrc\s*=\s*)(?:"([^"]*)"|'([^']*)')"#).unwrap();
-    let src_of = |c: &Captures| unescape(c.get(2).or_else(|| c.get(3)).map_or("", |m| m.as_str()));
-    let mut wanted: Vec<(String, String)> = Vec::new();
-    for c in img.captures_iter(html) {
-        let src = src_of(&c);
-        if let Some(path) = site_path(&src, &host) {
-            if !wanted.iter().any(|(s, _)| *s == src) {
-                wanted.push((src, path));
-            }
-        }
-    }
-    let local = if wanted.is_empty() || cache::make_dir(files).is_err() { HashMap::new() } else { download(&wanted, client, files) };
-    let html = img.replace_all(html, |c: &Captures| match local.get(&src_of(c)) {
-        Some(url) => format!("{}\"{url}\"", &c[1]),
-        None => c[0].to_string(),
-    });
-    let href = Regex::new(r#"(?i)(<a\b[^>]*?\shref\s*=\s*)"(/[^"]*)""#).unwrap();
-    href.replace_all(&html, |c: &Captures| {
-        if c[2].starts_with("//") {
-            c[0].to_string()
-        } else {
-            format!("{}\"{}{}\"", &c[1], site.trim_end_matches('/'), &c[2])
-        }
-    })
-    .into_owned()
-}
-
-/// The path (with query) of an image on the site itself, or `None` for anything elsewhere.
-fn site_path(src: &str, host: &str) -> Option<String> {
-    if src.starts_with('/') && !src.starts_with("//") {
-        return Some(src.to_string());
-    }
-    let rest = src.strip_prefix("https://").or_else(|| src.strip_prefix("http://")).or_else(|| src.strip_prefix("//"))?;
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    if !rest[..end].eq_ignore_ascii_case(host) {
-        return None;
-    }
-    let path = &rest[end..];
-    Some(if path.starts_with('/') { path.to_string() } else { format!("/{path}") })
-}
-
-/// Downloads a few at a time; an image that fails keeps its original address.
-fn download(wanted: &[(String, String)], client: &Client, files: &Path) -> HashMap<String, String> {
-    let per_thread = wanted.len().div_ceil(6);
-    std::thread::scope(|s| {
-        let workers: Vec<_> = wanted
-            .chunks(per_thread)
-            .map(|chunk| {
-                s.spawn(move || {
-                    chunk.iter().filter_map(|(src, path)| Some((src.clone(), save(client, path, files)?))).collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
-    })
-}
-
-fn save(client: &Client, path: &str, files: &Path) -> Option<String> {
-    let path = path.split('#').next().unwrap_or(path);
-    let (body, content_type) = client.get(path, "*/*").ok()?;
-    let file = files.join(format!("{}.{}", &cache::key(path)[..16], extension(&content_type, path)));
-    std::fs::write(&file, body).ok()?;
-    Some(file_url(&file))
-}
-
-/// WebKit needs the extension to show an SVG from a file.
-fn extension(content_type: &str, path: &str) -> String {
-    let mime = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
-    let known = match mime.as_str() {
-        "image/png" => "png",
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        "image/bmp" => "bmp",
-        _ => "",
-    };
-    if !known.is_empty() {
-        return known.into();
-    }
-    let file = path.split('?').next().unwrap_or("").rsplit('/').next().unwrap_or("");
-    match file.rsplit_once('.') {
-        Some((_, ext)) if (1..=5).contains(&ext.len()) && ext.bytes().all(|b| b.is_ascii_alphanumeric()) => ext.to_ascii_lowercase(),
-        _ => "bin".into(),
-    }
-}
-
-fn file_url(path: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    let mut url = String::from("file://");
-    for &b in path.as_os_str().as_bytes() {
-        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
-            url.push(b as char);
-        } else {
-            url += &format!("%{b:02X}");
-        }
-    }
-    url
-}
-
 // ---- text -------------------------------------------------------------------------------------
 
 pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
 }
 
-/// The entities an attribute value commonly holds; `&amp;` last so `&amp;lt;` stays `&lt;`.
-fn unescape(s: &str) -> String {
-    s.replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-}
-
 /// `2026-11-01T10:00:00.000+0900` → `2026-11-01 10:00`.
 pub(crate) fn short_time(iso: &str) -> String {
     iso.chars().take(16).collect::<String>().replace('T', " ")
-}
-
-fn base64(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
-        for i in 0..4 {
-            out.push(if i <= chunk.len() { ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
-        }
-    }
-    out
 }
 
 /// Now in UTC, RFC 3339 to the second.
@@ -427,11 +261,11 @@ fn now() -> String {
     format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
 }
 
-/// One line from stdin after a prompt on stderr; without echo when `echo` is false and stdin is a terminal.
-fn read_line(prompt: &str, echo: bool) -> io::Result<String> {
+/// One secret line from stdin after a prompt on stderr; without echo when stdin is a terminal.
+fn read_secret(prompt: &str) -> io::Result<String> {
     eprint!("{prompt}");
     io::stderr().flush()?;
-    let quiet = if echo { None } else { NoEcho::on_stdin() };
+    let quiet = NoEcho::on_stdin();
     let mut line = String::new();
     io::stdin().lock().read_line(&mut line)?;
     if quiet.is_some() {

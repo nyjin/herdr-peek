@@ -201,8 +201,6 @@ fn link_resolves_relative() {
 fn link_url_item() {
     let f = fixture();
     for (clicked, url) in [
-        ("https://example.atlassian.net/browse/ABC-1?focusedCommentId=2", "https://example.atlassian.net/browse/ABC-1"),
-        ("https://example.atlassian.net/wiki/spaces/X/pages/123/T", "https://example.atlassian.net/wiki/spaces/X/pages/123/T"),
         ("https://github.com/o/r/pull/7/files", "https://github.com/o/r/pull/7"),
     ] {
         let out = f.click(clicked);
@@ -215,15 +213,21 @@ fn link_url_item() {
 
 #[test]
 fn link_other_web_url_is_not_resolved() {
-    let f = fixture();
-    let url = "https://github.com/o/r/blob/main/README.md";
-    let out = f.click(url);
-    assert!(out.status.success());
-    assert!(f.view().is_none());
-    assert!(f.called(&["pane", "get"]).is_empty());
-    assert!(f.called(&["notification", "show"]).is_empty());
-    // PEEK_OPEN points at the fake too, so the hand-off to the browser is logged as a call with the URL alone.
-    assert_eq!(f.called(&[url]).len(), 1);
+    // Jira and Confluence addresses among them since their removal (2026-11-18).
+    for url in [
+        "https://github.com/o/r/blob/main/README.md",
+        "https://example.atlassian.net/browse/ABC-1",
+        "https://example.atlassian.net/wiki/spaces/X/pages/123/T",
+    ] {
+        let f = fixture();
+        let out = f.click(url);
+        assert!(out.status.success());
+        assert!(f.view().is_none());
+        assert!(f.called(&["pane", "get"]).is_empty());
+        assert!(f.called(&["notification", "show"]).is_empty());
+        // PEEK_OPEN points at the fake too, so the hand-off to the browser is logged as a call with the URL alone.
+        assert_eq!(f.called(&[url]).len(), 1);
+    }
 }
 
 #[test]

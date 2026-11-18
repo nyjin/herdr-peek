@@ -1,5 +1,4 @@
-//! Link cache: `~/.cache/peek/links/<sha256 of the URL>.json` holds the fetched page with its fetch time; the
-//! page's attachments sit next to it in `<sha256 of the URL>/`.
+//! Link cache: `~/.cache/peek/links/<sha256 of the URL>.json` holds the fetched page with its fetch time.
 use crate::fetch::Fetched;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -34,13 +33,8 @@ pub fn store(dir: &Path, url: &str, page: &Fetched) -> io::Result<()> {
     fs::rename(&tmp, file)
 }
 
-/// Where the page's attachments go.
-pub fn files_dir(dir: &Path, url: &str) -> PathBuf {
-    dir.join(key(url))
-}
-
 /// The cache holds private content: folders it creates are the user's only.
-pub(crate) fn make_dir(path: &Path) -> io::Result<()> {
+fn make_dir(path: &Path) -> io::Result<()> {
     fs::DirBuilder::new().recursive(true).mode(0o700).create(path)
 }
 
