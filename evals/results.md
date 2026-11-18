@@ -72,3 +72,23 @@ Same separate herdr 0.9.5 session as above.
 
 Not checked by a script: the caret's look (the test window sits behind the working one, so captures were stale) and
 Shift-Enter from a real keyboard (it depends on herdr passing it on; `↑` does the same).
+
+# Terminal colours and fonts (2026-11-18 and 19)
+
+A separate herdr 0.9.5 session in its own Ghostty 1.3.1 window, as above (`XDG_CONFIG_HOME` pointed at a temporary
+folder with `ghostty/config` linked to the user's real one, so Ghostty read the same configuration). Ghostty's theme:
+`dark:Catppuccin Mocha,light:Catppuccin Frappe`; font `Jetendard`, then `JetBrains Mono Hangul`. Clicks through
+`peek link`, reload and screenshots through `peek action`, from the Claude-side pane.
+
+| Area | Result |
+|---|---|
+| Colour answers at start (dark) | all 18 (fg, bg, palette 0-15) in 146-259 ms after start; page `--base: #1e1e2e` (Mocha) |
+| Source highlighting | keywords `#f5c2e7`, strings `#a6e3a1`, numbers `#f9e2af`, functions `#89b4fa`, comments italic `#6d7187`: readable |
+| Ghostty's font | `["Jetendard", "JetBrains Mono Hangul"]` read in 38-97 ms (one first run after a rebuild took over 300 ms: the fonts now still reach the theme when they come late); code shown in Jetendard |
+| Plugin pane environment | `TERM_PROGRAM=herdr`, `GHOSTTY_BIN_DIR` set: Ghostty is found by `GHOSTTY_BIN_DIR` |
+| System appearance switched to light, viewer open | page unchanged (Mocha); no key or scroll from the answers or the scheme report |
+| Reload after the switch | answers again in one query; page `--base: #303446` (Frappe), still dark by the luminance rule |
+| Reload | one query and one page build per press; two `peek action reload` at the same moment arrive as one command (the state file) |
+
+Not checked: a terminal that answers fg/bg but no palette (covered by tests only), and Alt+] in the viewer (the
+give-up path is covered by `unterminated_osc_gives_way_to_later_input`).
