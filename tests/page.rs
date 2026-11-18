@@ -3,13 +3,15 @@
 use peek::fetch::Fetched;
 use peek::page::{browser_page, build, kind_of, page_url, Doc, FileKind, PageOptions};
 use peek::state::Mode;
+use peek::theme::{take_answer, PageTheme, TermColors};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const CSP: &str = "default-src 'none'; img-src * data: file:; style-src 'unsafe-inline'; font-src data: file:";
 
 fn opts(dark: bool, mode: Mode, line: Option<u32>) -> PageOptions {
-    PageOptions { dark, font_px: 15.0, mode, line }
+    PageOptions { theme: Arc::new(PageTheme::builtin(dark)), font_px: 15.0, mode, line }
 }
 
 fn rendered() -> PageOptions {
@@ -289,7 +291,7 @@ fn html_file_blocks_scripts_but_keeps_its_styles() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("report.html");
     std::fs::write(&file, "<!doctype html><html><head><link rel=\"stylesheet\" href=\"style.css\"></head><body><script>x()</script>hi</body></html>").unwrap();
-    let opts = peek::page::PageOptions { dark: true, font_px: 14.0, mode: peek::state::Mode::Rendered, line: None };
+    let opts = peek::page::PageOptions { font_px: 14.0, ..rendered() };
     for page in [peek::page::build(&peek::page::Doc::File(file.clone()), &opts).unwrap(), peek::page::browser_page(&peek::page::Doc::File(file.clone()), &opts).unwrap()] {
         assert!(page.contains("script-src 'none'; object-src 'none'"), "{page}");
         assert!(!page.contains("default-src 'none'")); // its own stylesheet must still load
@@ -303,9 +305,57 @@ fn headings_get_github_style_ids() {
     let file = dir.path().join("toc.md");
     // a Korean heading keeps its letters, as on GitHub
     std::fs::write(&file, "# Page A\n\n## The end\n\n## The end\n\n## \u{d55c}\u{ae00} \u{c81c}\u{baa9}!\n\n## Custom {#own}\n").unwrap();
-    let opts = peek::page::PageOptions { dark: true, font_px: 14.0, mode: peek::state::Mode::Rendered, line: None };
+    let opts = peek::page::PageOptions { font_px: 14.0, ..rendered() };
     let page = peek::page::build(&peek::page::Doc::File(file), &opts).unwrap();
     for id in ["page-a", "the-end", "the-end-1", "\u{d55c}\u{ae00}-\u{c81c}\u{baa9}"] {
         assert!(page.contains(&format!("id=\"{id}\"")), "{id}: {page}");
     }
+}
+
+/// The theme the viewer makes from herdr's answers under Ghostty's Catppuccin Mocha, with Ghostty's font.
+fn terminal_theme() -> PageTheme {
+    let mut c = TermColors::default();
+    let palette = [
+        "45/47/5a", "f3/8b/a8", "a6/e3/a1", "f9/e2/af", "89/b4/fa", "f5/c2/e7", "94/e2/d5", "ba/c2/de", "58/5b/70",
+        "f7/ae/c2", "c2/ec/bf", "fc/d6/82", "ae/cc/fc", "f3/98/da", "b1/ea/e1", "a6/ad/c8",
+    ];
+    let mut answers = vec!["10;rgb:cd/d6/f4".to_string(), "11;rgb:1e/1e/2e".to_string()];
+    answers.extend(palette.iter().enumerate().map(|(n, rgb)| format!("4;{n};rgb:{rgb}")));
+    for a in &answers {
+        assert!(take_answer(&mut c, a), "{a}");
+    }
+    PageTheme::from_terminal(&c, false, vec!["Jetendard".into()])
+}
+
+fn terminal_opts() -> PageOptions {
+    PageOptions { theme: Arc::new(terminal_theme()), ..rendered() }
+}
+
+#[test]
+fn terminal_colours_and_font_reach_the_page() {
+    let t = tempfile::tempdir().unwrap();
+    for path in [write(t.path(), "a.md", b"# x\n\n`code`\n"), write(t.path(), "a.rs", b"fn x() {}\n")] {
+        let page = page_of(&path, &terminal_opts());
+        assert!(page.contains("--surface0: #333446"), "{page}");
+        assert!(page.contains(r#"code, pre, body.source { font-family: "Jetendard", "JetBrains Mono""#), "{page}");
+        let body_rule = &page[page.find("body { font:").unwrap()..];
+        let body_rule = &body_rule[..body_rule.find('}').unwrap()];
+        assert!(!body_rule.contains("Jetendard"), "{body_rule}");
+    }
+}
+
+#[test]
+fn source_page_uses_the_terminal_highlighting() {
+    let t = tempfile::tempdir().unwrap();
+    let page = page_of(&write(t.path(), "a.rs", b"fn main() { let s = \"x\"; }\n"), &terminal_opts());
+    assert!(page.contains("color:#a6e3a1;"), "{page}");
+    assert!(page.contains("color:#f5c2e7;"), "{page}");
+}
+
+#[test]
+fn html_file_find_marks_follow_the_theme() {
+    let t = tempfile::tempdir().unwrap();
+    let path = write(t.path(), "a.html", b"<!doctype html><html><head></head><body>x</body></html>");
+    let page = page_of(&path, &terminal_opts());
+    assert!(page.contains("rgba(249, 226, 175, .35)"), "{page}");
 }

@@ -265,7 +265,7 @@ fn view_rows(v: &Viewer) -> u32 {
 fn page_options(v: &Viewer, line: Option<u32>) -> PageOptions {
     // Text about as tall as the terminal's: a cell is about 1.35 times the font size.
     let font_px = (v.g.cell_h as f64 / v.dpr / 1.35).clamp(10.0, 28.0) as f32;
-    PageOptions { dark: v.dark, font_px, mode: v.mode, line }
+    PageOptions { theme: std::sync::Arc::new(crate::theme::PageTheme::builtin(v.dark)), font_px, mode: v.mode, line }
 }
 
 fn background(v: &Viewer) -> [u8; 3] {

@@ -2,6 +2,7 @@
 //! font size, CSP, find highlight styles). (Task 3)
 use crate::fetch::Fetched;
 use crate::state::Mode;
+use crate::theme::{css_code_fonts, PageTheme, Rgb};
 use pulldown_cmark::{html, CowStr, Event, LinkType, Options, Parser, Tag, TagEnd};
 use regex::{Captures, Regex};
 use std::fmt::Write as _;
@@ -9,7 +10,7 @@ use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::html::{append_highlighted_html_for_styled_line, IncludeBackground};
@@ -31,10 +32,10 @@ pub enum FileKind {
     Text,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PageOptions {
-    /// Catppuccin Mocha when true, Latte when false.
-    pub dark: bool,
+    /// Colours, source highlighting and code font (`theme::PageTheme`).
+    pub theme: Arc<PageTheme>,
     /// Base font size in CSS px.
     pub font_px: f32,
     pub mode: Mode,
@@ -53,65 +54,6 @@ const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_STRIKETHROUGH)
     .union(Options::ENABLE_TASKLISTS)
     .union(Options::ENABLE_FOOTNOTES);
-
-/// Catppuccin colours (https://github.com/catppuccin/palette) used by the template.
-struct Palette {
-    scheme: &'static str,
-    base: &'static str,
-    mantle: &'static str,
-    surface0: &'static str,
-    surface1: &'static str,
-    text: &'static str,
-    subtext0: &'static str,
-    overlay0: &'static str,
-    blue: &'static str,
-    /// Find marks: every match lightly, the current one strongly.
-    find: &'static str,
-    current: &'static str,
-    current_text: &'static str,
-    /// syntect's bundled theme for source pages.
-    syntax_theme: &'static str,
-}
-
-const MOCHA: Palette = Palette {
-    scheme: "dark",
-    base: "#1e1e2e",
-    mantle: "#181825",
-    surface0: "#313244",
-    surface1: "#45475a",
-    text: "#cdd6f4",
-    subtext0: "#a6adc8",
-    overlay0: "#6c7086",
-    blue: "#89b4fa",
-    find: "rgba(249, 226, 175, .35)",
-    current: "#f9e2af",
-    current_text: "#11111b",
-    syntax_theme: "base16-ocean.dark",
-};
-
-const LATTE: Palette = Palette {
-    scheme: "light",
-    base: "#eff1f5",
-    mantle: "#e6e9ef",
-    surface0: "#ccd0da",
-    surface1: "#bcc0cc",
-    text: "#4c4f69",
-    subtext0: "#6c6f85",
-    overlay0: "#9ca0b0",
-    blue: "#1e66f5",
-    find: "rgba(223, 142, 29, .3)",
-    current: "#df8e1d",
-    current_text: "#eff1f5",
-    syntax_theme: "base16-ocean.light",
-};
-
-fn palette(dark: bool) -> &'static Palette {
-    if dark {
-        &MOCHA
-    } else {
-        &LATTE
-    }
-}
 
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEMES: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
@@ -193,7 +135,7 @@ fn read_text(path: &Path) -> io::Result<String> {
 }
 
 fn template(opts: &PageOptions, title: &str, head: &str, css: &str, class: &str, body: &str) -> String {
-    let p = palette(opts.dark);
+    let p = &*opts.theme;
     format!(
         "<!doctype html>\n<html><head><meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">\n{head}<title>{title}</title>\n\
@@ -204,32 +146,36 @@ fn template(opts: &PageOptions, title: &str, head: &str, css: &str, class: &str,
     )
 }
 
-fn common_css(p: &Palette, font_px: f32) -> String {
+fn common_css(p: &PageTheme, font_px: f32) -> String {
     format!(
         ":root {{ color-scheme: {scheme}; --base: {base}; --mantle: {mantle}; --surface0: {surface0}; \
          --surface1: {surface1}; --text: {text}; --subtext0: {subtext0}; --overlay0: {overlay0}; --blue: {blue}; }}\n\
          html, body {{ margin: 0; background: var(--base); color: var(--text); }}\n\
          body {{ font: {font_px}px/1.6 -apple-system, \"Apple SD Gothic Neo\", sans-serif; }}\n\
          a {{ color: var(--blue); }}\n\
-         code, pre, body.source {{ font-family: \"JetBrains Mono\", Menlo, monospace; }}\n",
-        scheme = p.scheme,
-        base = p.base,
-        mantle = p.mantle,
-        surface0 = p.surface0,
-        surface1 = p.surface1,
-        text = p.text,
-        subtext0 = p.subtext0,
-        overlay0 = p.overlay0,
-        blue = p.blue,
+         code, pre, body.source {{ font-family: {code_fonts}; }}\n",
+        scheme = if p.dark { "dark" } else { "light" },
+        base = p.base.hex(),
+        mantle = p.mantle.hex(),
+        surface0 = p.surface0.hex(),
+        surface1 = p.surface1.hex(),
+        text = p.text.hex(),
+        subtext0 = p.subtext0.hex(),
+        overlay0 = p.overlay0.hex(),
+        blue = p.blue.hex(),
+        code_fonts = css_code_fonts(&p.code_fonts),
     )
 }
 
 /// In the page from the start: added at the first search, the first capture after it misses them.
-fn find_css(p: &Palette) -> String {
+fn find_css(p: &PageTheme) -> String {
+    let Rgb(r, g, b) = p.find;
     format!(
-        "::highlight(peek-find) {{ background-color: {}; }}\n\
+        "::highlight(peek-find) {{ background-color: rgba({r}, {g}, {b}, {alpha}); }}\n\
          ::highlight(peek-cur) {{ background-color: {}; color: {}; }}\n",
-        p.find, p.current, p.current_text
+        p.current.hex(),
+        p.current_text.hex(),
+        alpha = if p.dark { ".35" } else { ".3" },
     )
 }
 
@@ -383,7 +329,7 @@ fn html_file_page(text: &str, folder: &str, opts: &PageOptions, absolute: bool) 
     // the copy opened in a browser.
     add.push_str(HTML_FILE_CSP);
     if !absolute {
-        write!(add, "<style>\n{}</style>", find_css(palette(opts.dark))).unwrap();
+        write!(add, "<style>\n{}</style>", find_css(&opts.theme)).unwrap();
     }
     // After <head>, else <html>, else the doctype: anything before the doctype puts the page in quirks mode.
     let at = [&*HEAD, &*HTML, &*DOCTYPE].iter().find_map(|re| re.find(&text)).map_or(0, |m| m.end());
@@ -409,7 +355,8 @@ fn fetched_page(f: &Fetched, opts: &PageOptions, absolute: bool) -> String {
 /// Line numbers and code in a table, one row per line (`id="L<n>"`, the marked line `class="hit"`); highlighted
 /// with syntect up to `HIGHLIGHT_LINES`, plain text after that.
 fn source_page(text: &str, syntax: Option<&SyntaxReference>, title: &str, opts: &PageOptions) -> String {
-    let theme: &Theme = &THEMES.themes[palette(opts.dark).syntax_theme];
+    let builtin = if opts.theme.dark { "base16-ocean.dark" } else { "base16-ocean.light" };
+    let theme: &Theme = opts.theme.syntax.as_ref().unwrap_or(&THEMES.themes[builtin]);
     let mut hl = syntax.map(|s| HighlightLines::new(s, theme));
     let mark = opts.line.map(|l| l as usize);
     let mut rows = String::with_capacity(text.len() * 4 + 1024);
