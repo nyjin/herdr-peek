@@ -95,6 +95,18 @@ pub fn parse(buf: &[u8]) -> (Vec<Input>, usize) {
     (out, i)
 }
 
+/// `parse` for input whose head has waited too long as an incomplete escape sequence (an `ESC ]` that never ends,
+/// such as Alt+] sent as `ESC ]`): its first two bytes become `Alt(<second byte>)` and the rest is parsed as usual.
+pub fn give_up(buf: &[u8]) -> (Vec<Input>, usize) {
+    if buf.len() < 2 || buf[0] != 0x1b {
+        return parse(buf);
+    }
+    let mut out = vec![Input::Key(Key::Alt(buf[1] as char))];
+    let (rest, used) = parse(&buf[2..]);
+    out.extend(rest);
+    (out, 2 + used)
+}
+
 fn utf8_len(b: u8) -> usize {
     match b {
         0xf0..=0xf7 => 4,

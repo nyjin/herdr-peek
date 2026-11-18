@@ -266,3 +266,20 @@ fn device_attributes_and_scheme_reports_are_not_keys() {
     assert_eq!(used, input.len());
     assert_eq!(inputs, vec![Input::Attributes, Input::Key(Key::Char('r'))]);
 }
+
+#[test]
+fn unterminated_osc_gives_way_to_later_input() {
+    // Alt+] (sent as ESC ]) and then typing: the OSC never ends, so after a while the viewer gives up on it.
+    let input = b"\x1b]jkr\x1b[<35;10;20M";
+    assert_eq!(parse(input), (vec![], 0));
+    let (inputs, used) = give_up(input);
+    assert_eq!(used, input.len());
+    let mut expected = vec![
+        Input::Key(Key::Alt(']')),
+        Input::Key(Key::Char('j')),
+        Input::Key(Key::Char('k')),
+        Input::Key(Key::Char('r')),
+    ];
+    expected.extend(parse(b"\x1b[<35;10;20M").0);
+    assert_eq!(inputs, expected);
+}

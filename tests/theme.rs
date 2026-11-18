@@ -182,3 +182,73 @@ fn missing_or_failing_ghostty_is_empty() {
     let failing = fake_ghostty("echo 'font-family = Half'; exit 3");
     assert!(fonts_from(Some("ghostty"), Some(failing.path()), limit).is_empty());
 }
+
+/// Every colour of `mocha()` given to `asker` as the terminal's answers.
+fn answer_all(asker: &mut Asker) {
+    let c = mocha();
+    let hex = |c: Option<Rgb>| c.unwrap().hex();
+    assert!(asker.answer(&format!("10;{}", hex(c.fg))));
+    assert!(asker.answer(&format!("11;{}", hex(c.bg))));
+    for (n, colour) in c.ansi.iter().enumerate() {
+        assert!(asker.answer(&format!("4;{n};{}", hex(*colour))));
+    }
+}
+
+#[test]
+fn a_query_in_flight_is_joined() {
+    let mut a = Asker::default();
+    assert_eq!(a.start(), Some(1));
+    assert!(a.in_flight());
+    assert_eq!(a.start(), None);
+}
+
+#[test]
+fn query_waits_for_fonts_and_every_colour() {
+    let mut a = Asker::default();
+    let id = a.start().unwrap();
+    answer_all(&mut a);
+    assert_eq!(a.finish(None), None, "fonts not read yet");
+    assert_eq!(a.fonts(id, vec!["Jetendard".into()]), None);
+    let (colors, fonts) = a.finish(None).expect("done");
+    assert_eq!((colors, fonts), (mocha(), Some(vec!["Jetendard".to_string()])));
+    assert!(!a.in_flight());
+    assert!(!a.answer("10;#ffffff"), "no query in flight");
+}
+
+#[test]
+fn late_fonts_fold_into_the_finished_query() {
+    // The font read missed the 300 ms limit: the query finished without it, and the fonts are not thrown away.
+    let mut a = Asker::default();
+    let id = a.start().unwrap();
+    answer_all(&mut a);
+    assert_eq!(a.finish(Some(id + 1)), None, "another query's deadline");
+    assert_eq!(a.finish(Some(id)), Some((mocha(), None)));
+    assert_eq!(a.fonts(id, vec!["Jetendard".into()]), Some(vec!["Jetendard".to_string()]));
+}
+
+#[test]
+fn fonts_of_an_older_query_are_dropped() {
+    let mut a = Asker::default();
+    let first = a.start().unwrap();
+    assert!(a.finish(Some(first)).is_some());
+    let second = a.start().unwrap();
+    assert_eq!(a.fonts(first, vec!["Old".into()]), None);
+    assert_eq!(a.fonts(second, vec!["New".into()]), None);
+    answer_all(&mut a);
+    assert_eq!(a.finish(None).map(|(_, f)| f), Some(Some(vec!["New".to_string()])));
+}
+
+#[test]
+fn attributes_without_colours_end_the_query() {
+    let mut a = Asker::default();
+    let id = a.start().unwrap();
+    assert_eq!(a.fonts(id, vec![]), None);
+    a.attributes();
+    assert_eq!(a.finish(None), Some((TermColors::default(), Some(vec![]))));
+    // With some colours in, the attributes alone do not end it: herdr may still be forwarding palette answers.
+    let id = a.start().unwrap();
+    assert_eq!(a.fonts(id, vec![]), None);
+    assert!(a.answer("11;#1e1e2e"));
+    a.attributes();
+    assert_eq!(a.finish(None), None);
+}

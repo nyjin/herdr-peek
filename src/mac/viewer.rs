@@ -8,7 +8,7 @@ use crate::state::{self, Item, Mode, ViewState};
 use crate::fetch::{self, Endpoints};
 use crate::script::FindQuery;
 use crate::term::{self, Input, Key, MouseKind};
-use crate::theme::{self, PageTheme, TermColors};
+use crate::theme::{self, PageTheme};
 use crate::{herdr, script, target};
 use dispatch2::DispatchQueue;
 use objc2::MainThreadMarker;
@@ -58,9 +58,9 @@ struct Viewer {
     system_dark: bool,
     /// Colours and code font for pages: asked of the terminal at start and on reload only (`ask_terminal`).
     theme: Arc<PageTheme>,
-    /// The colour query in flight, and how many have been sent.
-    asking: Option<Asking>,
-    asks: u64,
+    /// The colour query (`theme::Asker`) and what runs when the one in flight is done.
+    asker: theme::Asker,
+    after_ask: Vec<Box<dyn FnOnce()>>,
     /// `/tmp/peek-<uid>/<project>/<session>`: pages, browser copies and screenshots live under it.
     base: PathBuf,
     page_file: Option<PathBuf>,
@@ -84,16 +84,6 @@ struct Viewer {
     title: String,
     shm_seq: u64,
     log: Option<File>,
-}
-
-/// A colour query in flight (`ask_terminal`): the answers so far, whether the device attributes came, Ghostty's fonts
-/// once read, and what to run when it is done.
-struct Asking {
-    id: u64,
-    colors: TermColors,
-    attributes: bool,
-    fonts: Option<Vec<String>>,
-    then: Vec<Box<dyn FnOnce()>>,
 }
 
 thread_local! { static V: RefCell<Option<Viewer>> = const { RefCell::new(None) }; }
@@ -162,8 +152,8 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             zoom: state::zoom(),
             system_dark: dark,
             theme: Arc::new(PageTheme::builtin(dark)),
-            asking: None,
-            asks: 0,
+            asker: theme::Asker::default(),
+            after_ask: Vec::new(),
             base,
             page_file: None,
             find: None,
@@ -296,20 +286,11 @@ fn background(v: &Viewer) -> [u8; 3] {
 
 /// Ask the terminal for its colours (herdr answers with the outer terminal's) and read Ghostty's font, then build the
 /// page theme and run `then`. Only at start and on reload: a theme change while the viewer is open is not followed.
-/// A query already in flight takes `then` along. Done when every colour is in, when the terminal's device attributes
-/// come with no colour (it answers none), or after 300 ms.
+/// A query already in flight takes `then` along; when it is done is `theme::Asker`'s rule, with a 300 ms deadline.
 fn ask_terminal(then: impl FnOnce() + 'static) {
-    let id = with(|v| match v.asking.as_mut() {
-        Some(a) => {
-            a.then.push(Box::new(then));
-            None
-        }
-        None => {
-            v.asks += 1;
-            let id = v.asks;
-            v.asking = Some(Asking { id, colors: TermColors::default(), attributes: false, fonts: None, then: vec![Box::new(then)] });
-            Some(id)
-        }
+    let id = with(|v| {
+        v.after_ask.push(Box::new(then));
+        v.asker.start()
     });
     let Some(id) = id else { return };
     out(&theme::query());
@@ -319,9 +300,10 @@ fn ask_terminal(then: impl FnOnce() + 'static) {
         let ms = now_ms() - t0;
         DispatchQueue::main().exec_async(move || {
             log(serde_json::json!({"ev": "fonts", "id": id, "ms": ms, "fonts": fonts}));
+            // Read after the deadline: the theme built without them takes them now, so later pages show them.
             with(|v| {
-                if let Some(a) = v.asking.as_mut().filter(|a| a.id == id) {
-                    a.fonts = Some(fonts);
+                if let Some(late) = v.asker.fonts(id, fonts) {
+                    v.theme = Arc::new(PageTheme { code_fonts: late, ..(*v.theme).clone() });
                 }
             });
             finish_asking(None);
@@ -332,33 +314,24 @@ fn ask_terminal(then: impl FnOnce() + 'static) {
 
 fn on_osc(body: String) {
     // An answer with no query in flight (late, or not asked for) changes nothing.
-    if with(|v| v.asking.as_mut().is_some_and(|a| theme::take_answer(&mut a.colors, &body))) {
+    if with(|v| v.asker.answer(&body)) {
         finish_asking(None);
     }
 }
 
 fn on_attributes() {
-    with(|v| {
-        if let Some(a) = v.asking.as_mut() {
-            a.attributes = true;
-        }
-    });
+    with(|v| v.asker.attributes());
     finish_asking(None);
 }
 
-/// Finish the query in flight when it is ready, or when `forced` names it (its 300 ms are up): fonts not read by then
-/// stay as they were.
-fn finish_asking(forced: Option<u64>) {
+/// Build the theme once the query in flight is done, or when `deadline` names it (its 300 ms are up): fonts not read
+/// by then stay as they were until they come.
+fn finish_asking(deadline: Option<u64>) {
     let done = with(|v| {
-        let a = v.asking.as_ref()?;
-        let ready = a.fonts.is_some() && (a.colors.complete() || (a.attributes && a.colors.answered() == 0));
-        if !ready && forced != Some(a.id) {
-            return None;
-        }
-        let a = v.asking.take()?;
-        let fonts = a.fonts.unwrap_or_else(|| v.theme.code_fonts.clone());
-        v.theme = Arc::new(PageTheme::from_terminal(&a.colors, v.system_dark, fonts));
-        Some((a.then, a.colors.answered(), v.theme.dark, v.theme.code_fonts.clone()))
+        let (colors, fonts) = v.asker.finish(deadline)?;
+        let fonts = fonts.unwrap_or_else(|| v.theme.code_fonts.clone());
+        v.theme = Arc::new(PageTheme::from_terminal(&colors, v.system_dark, fonts));
+        Some((std::mem::take(&mut v.after_ask), colors.answered(), v.theme.dark, v.theme.code_fonts.clone()))
     });
     let Some((then, answered, dark, fonts)) = done else { return };
     log(serde_json::json!({"ev": "theme", "answered": answered, "dark": dark, "fonts": fonts}));
@@ -386,7 +359,7 @@ fn open(item: Item, mode: Mode, keep_top: Option<u64>) {
 /// The page's font size comes from the cell size, which herdr reports a moment after the pane starts: wait for
 /// it (up to a second) before the first page is built.
 fn open_when_measured(item: Item, mode: Mode, keep_top: Option<u64>, tries: u32) {
-    if (!term::pixel_size_known() || with(|v| v.asking.is_some())) && tries < 20 {
+    if (!term::pixel_size_known() || with(|v| v.asker.in_flight())) && tries < 20 {
         return after(50, move || open_when_measured(item, mode, keep_top, tries + 1));
     }
     // The size may have arrived since the viewer measured at start: measure again before building the page.
@@ -1149,26 +1122,41 @@ fn read_input() {
         let mut stdin = io::stdin();
         let mut pending: Vec<u8> = Vec::new();
         let mut buf = [0u8; 4096];
+        // Since when the head of `pending` has been an incomplete escape sequence.
+        let mut stuck: Option<Instant> = None;
         loop {
             let mut pfd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
             let ready = unsafe { libc::poll(&mut pfd, 1, 30) };
             if WINCH.swap(false, Ordering::SeqCst) {
                 DispatchQueue::main().exec_async(resized);
             }
-            if ready <= 0 {
-                if pending == [0x1b] {
-                    pending.clear();
-                    let t = now_ms();
-                    DispatchQueue::main().exec_async(move || on_key(Key::Esc, t));
+            let mut inputs = Vec::new();
+            if ready > 0 {
+                match stdin.read(&mut buf) {
+                    Ok(0) | Err(_) => DispatchQueue::main().exec_async(|| quit()),
+                    Ok(n) => pending.extend_from_slice(&buf[..n]),
                 }
-                continue;
+                let (got, used) = term::parse(&pending);
+                pending.drain(..used);
+                if used > 0 {
+                    stuck = None;
+                }
+                inputs = got;
+            } else if pending == [0x1b] {
+                pending.clear();
+                inputs.push(Input::Key(Key::Esc));
             }
-            match stdin.read(&mut buf) {
-                Ok(0) | Err(_) => DispatchQueue::main().exec_async(|| quit()),
-                Ok(n) => pending.extend_from_slice(&buf[..n]),
+            // A sequence that never ends (an `ESC ]` from Alt+]) must not hold up the input behind it. Answers and
+            // mouse reports arrive whole, so 300 ms never cuts a real one; mouse motion keeps bytes coming, so the
+            // limit counts from when the head got stuck, not from the last byte.
+            if pending.len() < 2 {
+                stuck = None;
+            } else if stuck.get_or_insert_with(Instant::now).elapsed() >= Duration::from_millis(300) {
+                let (got, used) = term::give_up(&pending);
+                pending.drain(..used);
+                inputs.extend(got);
+                stuck = None;
             }
-            let (inputs, used) = term::parse(&pending);
-            pending.drain(..used);
             if inputs.is_empty() {
                 continue;
             }

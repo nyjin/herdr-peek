@@ -307,3 +307,79 @@ pub fn css_code_fonts(families: &[String]) -> String {
     css.push_str("\"JetBrains Mono\", Menlo, monospace");
     css
 }
+
+/// The viewer's colour query (`ask_terminal` in `src/mac/viewer.rs`): one at a time, numbered. Done when the fonts
+/// are read and every colour is in, when the device attributes come with no colour (the terminal answers none), or
+/// when its deadline is up (`finish(Some(id))`).
+#[derive(Debug, Default)]
+pub struct Asker {
+    current: Option<Ask>,
+    last: u64,
+    /// The last query finished without its fonts (deadline): they are still wanted when they come.
+    fonts_owed: bool,
+}
+
+#[derive(Debug)]
+struct Ask {
+    id: u64,
+    colors: TermColors,
+    attributes: bool,
+    fonts: Option<Vec<String>>,
+}
+
+impl Asker {
+    /// A new query's id, or `None` while one is in flight (the caller joins that one).
+    pub fn start(&mut self) -> Option<u64> {
+        if self.current.is_some() {
+            return None;
+        }
+        self.last += 1;
+        self.fonts_owed = false;
+        self.current = Some(Ask { id: self.last, colors: TermColors::default(), attributes: false, fonts: None });
+        Some(self.last)
+    }
+
+    pub fn in_flight(&self) -> bool {
+        self.current.is_some()
+    }
+
+    /// An OSC answer for the query in flight; false when it is not a colour or nothing is asked.
+    pub fn answer(&mut self, osc_body: &str) -> bool {
+        self.current.as_mut().is_some_and(|a| take_answer(&mut a.colors, osc_body))
+    }
+
+    /// The device attributes came.
+    pub fn attributes(&mut self) {
+        if let Some(a) = self.current.as_mut() {
+            a.attributes = true;
+        }
+    }
+
+    /// Fonts read for query `id`. `Some` when that query already finished without them and is still the latest:
+    /// the caller puts them into the theme it built (the read start or reload asked for, completed late).
+    pub fn fonts(&mut self, id: u64, fonts: Vec<String>) -> Option<Vec<String>> {
+        match self.current.as_mut() {
+            Some(a) if a.id == id => {
+                a.fonts = Some(fonts);
+                None
+            }
+            None if id == self.last && self.fonts_owed => {
+                self.fonts_owed = false;
+                Some(fonts)
+            }
+            _ => None,
+        }
+    }
+
+    /// The answers and fonts (`None`: not read in time) once the query in flight is done, or when `deadline` names it.
+    pub fn finish(&mut self, deadline: Option<u64>) -> Option<(TermColors, Option<Vec<String>>)> {
+        let a = self.current.as_ref()?;
+        let done = a.fonts.is_some() && (a.colors.complete() || (a.attributes && a.colors.answered() == 0));
+        if !done && deadline != Some(a.id) {
+            return None;
+        }
+        let a = self.current.take()?;
+        self.fonts_owed = a.fonts.is_none();
+        Some((a.colors, a.fonts))
+    }
+}
