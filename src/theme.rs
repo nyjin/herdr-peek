@@ -189,7 +189,40 @@ impl PageTheme {
             find,
             current,
             current_text,
+            syntax: syntax_theme(colors, fg, mix(bg, fg, 45)),
             ..builtin
         }
     }
+}
+
+/// Source highlighting in the terminal's colours, in the spirit of bat's `ansi` theme but with exact RGB: `None`
+/// unless palette colours 1 to 6 were all answered. `comment` is the page's `overlay0`: palette 8 is often too dark to
+/// read on the background (Mocha's `#585b70` on `#1e1e2e`).
+pub fn syntax_theme(colors: &TermColors, text: Rgb, comment: Rgb) -> Option<syntect::highlighting::Theme> {
+    use syntect::highlighting::{Color, FontStyle, ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSettings};
+    let ansi = |n: usize| colors.ansi[n];
+    let colour = |c: Rgb| Color { r: c.0, g: c.1, b: c.2, a: 0xff };
+    // syntect's Rust grammar scopes `fn` and `let` as `storage.type…`: they stay with keywords, not types.
+    let rows = [
+        ("comment", comment, Some(FontStyle::ITALIC)),
+        ("string", ansi(2)?, None),
+        ("constant", ansi(3)?, None),
+        ("keyword, storage", ansi(5)?, None),
+        ("entity.name.function, support.function", ansi(4)?, None),
+        ("entity.name.type, entity.name.class, support.type, support.class", ansi(6)?, None),
+        ("entity.name.tag, invalid", ansi(1)?, None),
+    ];
+    let scopes = rows
+        .into_iter()
+        .map(|(selector, c, font_style)| ThemeItem {
+            scope: selector.parse::<ScopeSelectors>().expect("a fixed selector"),
+            style: StyleModifier { foreground: Some(colour(c)), background: None, font_style },
+        })
+        .collect();
+    Some(Theme {
+        name: Some("terminal".into()),
+        settings: ThemeSettings { foreground: Some(colour(text)), ..ThemeSettings::default() },
+        scopes,
+        ..Theme::default()
+    })
 }

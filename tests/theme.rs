@@ -93,3 +93,35 @@ fn nothing_answered_is_builtin() {
     assert_eq!(PageTheme::from_terminal(&TermColors::default(), false, vec![]), PageTheme::builtin(false));
     assert_eq!(PageTheme::from_terminal(&TermColors::default(), true, vec![]), PageTheme::builtin(true));
 }
+
+/// One line of Rust highlighted with `theme`, as the source page renders it.
+fn highlight_rust(theme: &syntect::highlighting::Theme, line: &str) -> String {
+    use syntect::easy::HighlightLines;
+    use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
+    use syntect::parsing::SyntaxSet;
+    let ss = SyntaxSet::load_defaults_newlines();
+    let mut h = HighlightLines::new(ss.find_syntax_by_extension("rs").unwrap(), theme);
+    let regions = h.highlight_line(line, &ss).unwrap();
+    styled_line_to_highlighted_html(&regions, IncludeBackground::No).unwrap()
+}
+
+#[test]
+fn syntax_theme_uses_the_terminal_colours() {
+    let t = PageTheme::from_terminal(&mocha(), false, vec![]);
+    let html = highlight_rust(t.syntax.as_ref().expect("a theme from the 16 colours"), "fn main() { let s = \"x\"; let n = 42; // note\n");
+    assert!(html.contains("color:#f5c2e7;\">fn"), "keyword: {html}");
+    assert!(html.contains("color:#f5c2e7;\">let"), "keyword: {html}");
+    assert!(html.contains("color:#a6e3a1;\">&quot;x&quot;"), "string: {html}");
+    assert!(html.contains("color:#f9e2af;\">42"), "number: {html}");
+    assert!(html.contains("color:#89b4fa;\">main"), "function: {html}");
+    assert!(html.contains("font-style:italic;color:#6d7187;\">// note"), "comment: {html}");
+}
+
+#[test]
+fn no_palette_no_syntax_theme() {
+    let c = TermColors { fg: mocha().fg, bg: mocha().bg, ..TermColors::default() };
+    assert_eq!(PageTheme::from_terminal(&c, false, vec![]).syntax, None);
+    let mut partial = mocha();
+    partial.ansi[6] = None;
+    assert_eq!(PageTheme::from_terminal(&partial, false, vec![]).syntax, None);
+}
