@@ -14,6 +14,7 @@ pub mod select;
 pub mod state;
 pub mod target;
 pub mod term;
+pub mod theme;
 pub mod watcher;
 
 #[cfg(target_os = "macos")]
