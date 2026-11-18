@@ -314,8 +314,11 @@ fn ask_terminal(then: impl FnOnce() + 'static) {
     let Some(id) = id else { return };
     out(&theme::query());
     std::thread::spawn(move || {
+        let t0 = now_ms();
         let fonts = theme::read_code_fonts();
+        let ms = now_ms() - t0;
         DispatchQueue::main().exec_async(move || {
+            log(serde_json::json!({"ev": "fonts", "id": id, "ms": ms, "fonts": fonts}));
             with(|v| {
                 if let Some(a) = v.asking.as_mut().filter(|a| a.id == id) {
                     a.fonts = Some(fonts);
