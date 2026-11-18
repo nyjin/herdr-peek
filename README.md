@@ -65,6 +65,10 @@ type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
 
+## Colours and fonts
+
+Pages take the terminal's colours: background, text, links and find marks, and source highlighting in its 16 colours (peek asks the terminal; herdr answers with the outer terminal's). Under Ghostty, code and source text use Ghostty's `font-family`; body text keeps peek's font. Both are read when the viewer starts and when you press `r` (Reload): after changing the terminal's theme or the system appearance, press `r`. When the terminal does not answer, pages use Catppuccin Mocha or Latte.
+
 ## GitHub token
 
 PRs are fetched through the GitHub API, so peek needs a token once. It is kept in the macOS Keychain (service `peek`).

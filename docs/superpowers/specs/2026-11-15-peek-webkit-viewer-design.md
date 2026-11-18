@@ -28,7 +28,8 @@ Claude pane: markdown, source code, images, HTML, and GitHub PR content (Jira an
   with `peek auth`, and shown in the pane. (Jira and Confluence were removed on 2026-11-18.)
 - Screenshots go under `/tmp` (layout below).
 - Theme follows the system (dark/light); the page's font size follows the terminal's; zoom 50-200 % in 10 % steps,
-  remembered.
+  remembered. (Since 2026-11-18 the colours are the terminal's and the code font Ghostty's:
+  `2026-11-18-peek-terminal-theme-and-fonts-design.md`.)
 - Page scripts are off; HTML inside markdown is shown but never runs. Mermaid and math show as code blocks for now.
 - Scope of this round: implementation, tests and commits. No PR, merge or release.
 
@@ -75,6 +76,7 @@ Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-onl
 | `select` | select to open: clipboard text → source pane → files ("Select to open") | neutral |
 | `watcher` | the select-to-open watcher: clipboard polling, lock, lifetime; the pasteboard reader is in `mac/clipboard` | neutral loop, macOS pasteboard |
 | `target` | classify: PR, path with `:line` | neutral |
+| `theme` | the terminal's colour answers and Ghostty's font → page colours, source highlighting, code font | neutral |
 | `state` | state files, viewer bookkeeping, zoom preference, `/tmp` layout | neutral |
 | `page` | markdown/source/image/HTML/API content → page HTML (template, theme, CSP) | neutral |
 | `fetch` | GitHub REST calls, link cache | neutral (HTTP client) |
@@ -119,7 +121,8 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 - Markdown: pulldown-cmark with tables, strikethrough, task lists and footnotes. Source: syntect with the onig engine
   (line numbers; the clicked line marked and scrolled to). Images and SVG: an image element on the page background.
   HTML files: loaded as they are, scripts still off.
-- Template: Catppuccin Mocha (dark) or Latte (light) by the system appearance; the base font size follows the
+- Template: the terminal's colours and, under Ghostty, its font for code (`theme`; asked at start and on reload),
+  Catppuccin Mocha (dark) or Latte (light) when the terminal does not answer; the base font size follows the
   terminal cell height in CSS pixels; the find highlight styles (`::highlight(peek-find)`, `::highlight(peek-cur)`)
   are in the template from the start (inserted later, the first capture misses them).
 - CSP: `default-src 'none'; img-src * data: file:; style-src 'unsafe-inline'; font-src data: file:`. Page scripts

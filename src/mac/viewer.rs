@@ -8,6 +8,7 @@ use crate::state::{self, Item, Mode, ViewState};
 use crate::fetch::{self, Endpoints};
 use crate::script::FindQuery;
 use crate::term::{self, Input, Key, MouseKind};
+use crate::theme::{self, PageTheme, TermColors};
 use crate::{herdr, script, target};
 use dispatch2::DispatchQueue;
 use objc2::MainThreadMarker;
@@ -18,7 +19,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 const BAR_ROW: u16 = 1;
@@ -53,7 +54,13 @@ struct Viewer {
     choices: Vec<Item>,
     mode: Mode,
     zoom: u32,
-    dark: bool,
+    /// macOS's appearance at start: dark or light when the terminal does not answer with its background.
+    system_dark: bool,
+    /// Colours and code font for pages: asked of the terminal at start and on reload only (`ask_terminal`).
+    theme: Arc<PageTheme>,
+    /// The colour query in flight, and how many have been sent.
+    asking: Option<Asking>,
+    asks: u64,
     /// `/tmp/peek-<uid>/<project>/<session>`: pages, browser copies and screenshots live under it.
     base: PathBuf,
     page_file: Option<PathBuf>,
@@ -77,6 +84,16 @@ struct Viewer {
     title: String,
     shm_seq: u64,
     log: Option<File>,
+}
+
+/// A colour query in flight (`ask_terminal`): the answers so far, whether the device attributes came, Ghostty's fonts
+/// once read, and what to run when it is done.
+struct Asking {
+    id: u64,
+    colors: TermColors,
+    attributes: bool,
+    fonts: Option<Vec<String>>,
+    then: Vec<Box<dyn FnOnce()>>,
 }
 
 thread_local! { static V: RefCell<Option<Viewer>> = const { RefCell::new(None) }; }
@@ -143,7 +160,10 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             choices: Vec::new(),
             mode: Mode::Rendered,
             zoom: state::zoom(),
-            dark,
+            system_dark: dark,
+            theme: Arc::new(PageTheme::builtin(dark)),
+            asking: None,
+            asks: 0,
             base,
             page_file: None,
             find: None,
@@ -163,6 +183,7 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
         })
     });
     terminal_on();
+    ask_terminal(|| {});
     apply_geometry();
     draw_bar();
     let zoom = with(|v| v.zoom);
@@ -265,11 +286,82 @@ fn view_rows(v: &Viewer) -> u32 {
 fn page_options(v: &Viewer, line: Option<u32>) -> PageOptions {
     // Text about as tall as the terminal's: a cell is about 1.35 times the font size.
     let font_px = (v.g.cell_h as f64 / v.dpr / 1.35).clamp(10.0, 28.0) as f32;
-    PageOptions { theme: std::sync::Arc::new(crate::theme::PageTheme::builtin(v.dark)), font_px, mode: v.mode, line }
+    PageOptions { theme: v.theme.clone(), font_px, mode: v.mode, line }
 }
 
 fn background(v: &Viewer) -> [u8; 3] {
-    if v.dark { [0x1e, 0x1e, 0x2e] } else { [0xef, 0xf1, 0xf5] }
+    let b = v.theme.base;
+    [b.0, b.1, b.2]
+}
+
+/// Ask the terminal for its colours (herdr answers with the outer terminal's) and read Ghostty's font, then build the
+/// page theme and run `then`. Only at start and on reload: a theme change while the viewer is open is not followed.
+/// A query already in flight takes `then` along. Done when every colour is in, when the terminal's device attributes
+/// come with no colour (it answers none), or after 300 ms.
+fn ask_terminal(then: impl FnOnce() + 'static) {
+    let id = with(|v| match v.asking.as_mut() {
+        Some(a) => {
+            a.then.push(Box::new(then));
+            None
+        }
+        None => {
+            v.asks += 1;
+            let id = v.asks;
+            v.asking = Some(Asking { id, colors: TermColors::default(), attributes: false, fonts: None, then: vec![Box::new(then)] });
+            Some(id)
+        }
+    });
+    let Some(id) = id else { return };
+    out(&theme::query());
+    std::thread::spawn(move || {
+        let fonts = theme::read_code_fonts();
+        DispatchQueue::main().exec_async(move || {
+            with(|v| {
+                if let Some(a) = v.asking.as_mut().filter(|a| a.id == id) {
+                    a.fonts = Some(fonts);
+                }
+            });
+            finish_asking(None);
+        });
+    });
+    after(300, move || finish_asking(Some(id)));
+}
+
+fn on_osc(body: String) {
+    // An answer with no query in flight (late, or not asked for) changes nothing.
+    if with(|v| v.asking.as_mut().is_some_and(|a| theme::take_answer(&mut a.colors, &body))) {
+        finish_asking(None);
+    }
+}
+
+fn on_attributes() {
+    with(|v| {
+        if let Some(a) = v.asking.as_mut() {
+            a.attributes = true;
+        }
+    });
+    finish_asking(None);
+}
+
+/// Finish the query in flight when it is ready, or when `forced` names it (its 300 ms are up): fonts not read by then
+/// stay as they were.
+fn finish_asking(forced: Option<u64>) {
+    let done = with(|v| {
+        let a = v.asking.as_ref()?;
+        let ready = a.fonts.is_some() && (a.colors.complete() || (a.attributes && a.colors.answered() == 0));
+        if !ready && forced != Some(a.id) {
+            return None;
+        }
+        let a = v.asking.take()?;
+        let fonts = a.fonts.unwrap_or_else(|| v.theme.code_fonts.clone());
+        v.theme = Arc::new(PageTheme::from_terminal(&a.colors, v.system_dark, fonts));
+        Some((a.then, a.colors.answered(), v.theme.dark, v.theme.code_fonts.clone()))
+    });
+    let Some((then, answered, dark, fonts)) = done else { return };
+    log(serde_json::json!({"ev": "theme", "answered": answered, "dark": dark, "fonts": fonts}));
+    for f in then {
+        f();
+    }
 }
 
 /// Clear the page area and say something there (loading, errors, the choice list).
@@ -291,7 +383,7 @@ fn open(item: Item, mode: Mode, keep_top: Option<u64>) {
 /// The page's font size comes from the cell size, which herdr reports a moment after the pane starts: wait for
 /// it (up to a second) before the first page is built.
 fn open_when_measured(item: Item, mode: Mode, keep_top: Option<u64>, tries: u32) {
-    if !term::pixel_size_known() && tries < 20 {
+    if (!term::pixel_size_known() || with(|v| v.asking.is_some())) && tries < 20 {
         return after(50, move || open_when_measured(item, mode, keep_top, tries + 1));
     }
     // The size may have arrived since the viewer measured at start: measure again before building the page.
@@ -615,14 +707,15 @@ fn resized() {
 fn act(action: &str) {
     let (item, mode, top) = with(|v| (v.item.clone(), v.mode, v.view_top));
     match action {
-        "reload" => match item {
+        // Reload reads the terminal's colours and Ghostty's font again first.
+        "reload" => ask_terminal(move || match item {
             Some(i) if i.url.is_some() && i.path.is_none() => {
                 with(|v| v.keep_top = Some(top));
                 fetch_link(i.url.unwrap(), true)
             }
             Some(i) => open(i, mode, Some(top)),
             None => {}
-        },
+        }),
         "toggle" => {
             if let Some(i) = item {
                 open(i, if mode == Mode::Rendered { Mode::Source } else { Mode::Rendered }, None);
@@ -1083,7 +1176,8 @@ fn read_input() {
                         Input::Key(k) => on_key(k, t),
                         Input::Mouse(m) => on_mouse(m, t),
                         Input::Reply(r) => log(serde_json::json!({"ev": "kitty-reply", "reply": r})),
-                        Input::Osc(_) | Input::Attributes => {}
+                        Input::Osc(body) => on_osc(body),
+                        Input::Attributes => on_attributes(),
                     }
                 }
             });

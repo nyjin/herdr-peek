@@ -65,6 +65,10 @@ type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
 
+## 색과 글꼴
+
+페이지는 터미널의 색을 씁니다. 배경, 글자, 링크, 찾기 표시, 그리고 소스 강조도 터미널의 16색으로 칠합니다(peek이 터미널에 묻고, herdr가 바깥 터미널의 색으로 답합니다). Ghostty에서는 코드와 소스 글자에 Ghostty의 `font-family`를 쓰고, 본문은 peek의 글꼴을 그대로 씁니다. 둘 다 뷰어가 뜰 때와 `r`(Reload)을 누를 때 읽습니다. 터미널 테마나 시스템 외관을 바꾼 뒤에는 `r`을 누르세요. 터미널이 답하지 않으면 Catppuccin Mocha나 Latte를 씁니다.
+
 ## GitHub 토큰
 
 PR은 GitHub API로 받아 오기 때문에 토큰을 한 번 등록해야 합니다. 토큰은 macOS 키체인(서비스 이름 `peek`)에 저장됩니다.
