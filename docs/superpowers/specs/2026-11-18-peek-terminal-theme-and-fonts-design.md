@@ -124,9 +124,12 @@ Anti-goals:
 ### Source highlighting
 
 A syntect `Theme` built in code from the 16 colours (in the spirit of bat's `ansi` theme, with exact RGB):
-foreground `fg`; comments `ansi[8]`, italic; strings `ansi[2]`; numbers and constants `ansi[3]`; keywords and storage
-`ansi[5]`; functions `ansi[4]`; types `ansi[6]`; tags `ansi[1]`; invalid `ansi[1]`. Without the 16 colours: today's
-`base16-ocean` themes.
+foreground `fg`; comments `overlay0` (the page's mix of `bg` and `fg`), italic; strings `ansi[2]`; numbers and
+constants `ansi[3]`; keywords and storage `ansi[5]`; functions `ansi[4]`; types `ansi[6]`; tags `ansi[1]`; invalid
+`ansi[1]`. Without the 16 colours: today's `base16-ocean` themes.
+
+Comments do not use `ansi[8]`: in the user's Mocha it is `#585b70`, too dark to read on `#1e1e2e` (user decision,
+2026-11-18).
 
 ### Font (Ghostty)
 
