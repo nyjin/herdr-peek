@@ -44,6 +44,10 @@ pub enum Input {
     Mouse(Mouse),
     /// A Kitty graphics reply (`ESC _G ... ESC \`), without the framing.
     Reply(String),
+    /// An OSC answer (`ESC ] ... ESC \` or BEL), without the framing: the terminal's colours (`10;rgb:...`).
+    Osc(String),
+    /// The terminal's primary device attributes (`CSI ? ... c`): the end of the answers to peek's colour query.
+    Attributes,
 }
 
 /// Inputs in `buf` and the number of bytes consumed; an incomplete sequence at the end (a lone escape included) is
@@ -109,6 +113,9 @@ fn escape(s: &[u8]) -> Option<(Option<Input>, usize)> {
                 return Some((mouse(&s[3..end], s[end] == b'M'), end + 1));
             }
             let end = 2 + s[2..].iter().position(|b| (0x40..=0x7e).contains(b))?;
+            if s[2] == b'?' && s[end] == b'c' {
+                return Some((Some(Input::Attributes), end + 1));
+            }
             let key = match (&s[2..end], s[end]) {
                 (b"", b'A') => Some(Key::Up),
                 (b"", b'B') => Some(Key::Down),
@@ -125,6 +132,18 @@ fn escape(s: &[u8]) -> Option<(Option<Input>, usize)> {
             let end = s.windows(2).position(|w| w == b"\x1b\\")?;
             let body = String::from_utf8_lossy(&s[2..end]);
             Some((body.strip_prefix('G').map(|b| Input::Reply(b.to_string())), end + 2))
+        }
+        b']' => {
+            // Ended by ST (`ESC \`) or BEL, whichever comes first.
+            let st = s.windows(2).position(|w| w == b"\x1b\\");
+            let bel = s.iter().position(|&b| b == 0x07);
+            let (end, len) = match (st, bel) {
+                (Some(e), Some(b)) if b < e => (b, 1),
+                (Some(e), _) => (e, 2),
+                (None, Some(b)) => (b, 1),
+                (None, None) => return None,
+            };
+            Some((Some(Input::Osc(String::from_utf8_lossy(&s[2..end]).into_owned())), end + len))
         }
         b'\x1b' => Some((Some(Input::Key(Key::Esc)), 1)),
         b => Some((Some(Input::Key(Key::Alt(b as char))), 2)),

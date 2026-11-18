@@ -235,3 +235,34 @@ fn a_long_path_keeps_its_start_and_file_name() {
     // too narrow even for the file name: its end
     assert!(display_width(&shorten_path(path, 12)) <= 12);
 }
+
+#[test]
+fn parses_colour_answers() {
+    let input = b"\x1b]10;rgb:cdcd/d6d6/f4f4\x1b\\\x1b]4;1;rgb:f3/8b/a8\x07j";
+    let (inputs, used) = parse(input);
+    assert_eq!(used, input.len());
+    assert_eq!(
+        inputs,
+        vec![
+            Input::Osc("10;rgb:cdcd/d6d6/f4f4".into()),
+            Input::Osc("4;1;rgb:f3/8b/a8".into()),
+            Input::Key(Key::Char('j')),
+        ]
+    );
+}
+
+#[test]
+fn colour_answer_split_across_reads() {
+    assert_eq!(parse(b"\x1b]11;rgb:1e1e/1e"), (vec![], 0));
+    let whole = b"\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\";
+    assert_eq!(parse(whole), (vec![Input::Osc("11;rgb:1e1e/1e1e/2e2e".into())], whole.len()));
+}
+
+#[test]
+fn device_attributes_and_scheme_reports_are_not_keys() {
+    // A colour-scheme report (appearance switched while the viewer is open) is dropped: no live switching.
+    let input = b"\x1b[?62;22c\x1b[?997;2nr";
+    let (inputs, used) = parse(input);
+    assert_eq!(used, input.len());
+    assert_eq!(inputs, vec![Input::Attributes, Input::Key(Key::Char('r'))]);
+}

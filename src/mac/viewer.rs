@@ -1083,6 +1083,7 @@ fn read_input() {
                         Input::Key(k) => on_key(k, t),
                         Input::Mouse(m) => on_mouse(m, t),
                         Input::Reply(r) => log(serde_json::json!({"ev": "kitty-reply", "reply": r})),
+                        Input::Osc(_) | Input::Attributes => {}
                     }
                 }
             });
