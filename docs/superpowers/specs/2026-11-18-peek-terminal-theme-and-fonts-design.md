@@ -133,7 +133,9 @@ Comments do not use `ansi[8]`: in the user's Mocha it is `#585b70`, too dark to 
 
 ### Font (Ghostty)
 
-- Ghostty when `TERM_PROGRAM` is `ghostty` (any case) and `GHOSTTY_BIN_DIR` is set: run
+- Ghostty when `GHOSTTY_BIN_DIR` is set (only Ghostty sets it) and `TERM_PROGRAM` is `ghostty`, `herdr` (any case)
+  or unset: herdr 0.9.5 sets `TERM_PROGRAM=herdr` in its panes (seen in the viewer's plugin pane while building
+  this; herdr 0.9.0 passed `ghostty` through). Run
   `$GHOSTTY_BIN_DIR/ghostty +show-config` with a 1 s limit and take the `font-family = ` values in order; an empty
   value clears the list so far, as in Ghostty's configuration.
 - The families go in front of today's code list: `code, pre, body.source { font-family: "<family>", …, "JetBrains

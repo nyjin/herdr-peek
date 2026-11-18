@@ -247,13 +247,14 @@ pub fn ghostty_fonts(show_config: &str) -> Vec<String> {
     fonts
 }
 
-/// Ghostty's font families when `term_program` names Ghostty and `bin_dir` holds its binary: `ghostty +show-config`,
-/// given `limit` to answer. Empty otherwise, or when the command fails or takes too long.
+/// Ghostty's font families when `bin_dir` (`GHOSTTY_BIN_DIR`, which only Ghostty sets) holds its binary and
+/// `term_program` names no other terminal: Ghostty, herdr (herdr 0.9.5 sets `TERM_PROGRAM=herdr` in its panes) or
+/// unset. Runs `ghostty +show-config`, given `limit` to answer; empty otherwise, or when it fails or takes too long.
 pub fn fonts_from(term_program: Option<&str>, bin_dir: Option<&std::path::Path>, limit: std::time::Duration) -> Vec<String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
-    let (Some(program), Some(dir)) = (term_program, bin_dir) else { return Vec::new() };
-    if !program.eq_ignore_ascii_case("ghostty") {
+    let Some(dir) = bin_dir else { return Vec::new() };
+    if term_program.is_some_and(|p| !p.eq_ignore_ascii_case("ghostty") && !p.eq_ignore_ascii_case("herdr")) {
         return Vec::new();
     }
     let Ok(mut child) = Command::new(dir.join("ghostty"))
@@ -288,7 +289,7 @@ pub fn fonts_from(term_program: Option<&str>, bin_dir: Option<&std::path::Path>,
 }
 
 /// `fonts_from` for the terminal this process runs in: herdr panes carry the environment of the terminal the herdr
-/// server started in (`TERM_PROGRAM`, `GHOSTTY_BIN_DIR`).
+/// server started in (`GHOSTTY_BIN_DIR`).
 pub fn read_code_fonts() -> Vec<String> {
     let program = std::env::var("TERM_PROGRAM").ok();
     let dir = std::env::var_os("GHOSTTY_BIN_DIR").map(std::path::PathBuf::from);

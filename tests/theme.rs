@@ -159,8 +159,10 @@ fn fonts_from_ghostty_binary() {
     let dir = fake_ghostty("[ \"$1\" = +show-config ] && echo 'font-family = Jetendard'");
     let limit = std::time::Duration::from_secs(1);
     assert_eq!(fonts_from(Some("Ghostty"), Some(dir.path()), limit), ["Jetendard"]);
+    // herdr 0.9.5 sets TERM_PROGRAM=herdr in its panes; GHOSTTY_BIN_DIR still comes through from Ghostty.
+    assert_eq!(fonts_from(Some("herdr"), Some(dir.path()), limit), ["Jetendard"]);
+    assert_eq!(fonts_from(None, Some(dir.path()), limit), ["Jetendard"]);
     assert!(fonts_from(Some("WezTerm"), Some(dir.path()), limit).is_empty());
-    assert!(fonts_from(None, Some(dir.path()), limit).is_empty());
     assert!(fonts_from(Some("ghostty"), None, limit).is_empty());
 }
 
