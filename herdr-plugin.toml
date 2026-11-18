@@ -1,6 +1,6 @@
 id = "nyjin.peek"
 name = "peek"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.3"
 description = "Select a path, or Ctrl+click a GitHub PR address or a hyperlink, to read it, rendered by WebKit, in the pane beside it"
 platforms = ["macos"]
