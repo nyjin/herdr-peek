@@ -125,3 +125,58 @@ fn no_palette_no_syntax_theme() {
     partial.ansi[6] = None;
     assert_eq!(PageTheme::from_terminal(&partial, false, vec![]).syntax, None);
 }
+
+#[test]
+fn fonts_from_show_config() {
+    let text = "font-family = Jetendard\nfont-family-bold = X\nfont-family = JetBrains Mono Hangul\nfont-size = 14\n";
+    assert_eq!(ghostty_fonts(text), ["Jetendard", "JetBrains Mono Hangul"]);
+    assert_eq!(ghostty_fonts("font-family = A\nfont-family = \nfont-family = B\n"), ["B"]);
+    assert_eq!(ghostty_fonts("font-family = \"Fira Code\"\n"), ["Fira Code"]);
+    assert!(ghostty_fonts("theme = Catppuccin Mocha\n").is_empty());
+}
+
+#[test]
+fn css_font_list_is_escaped() {
+    let css = css_code_fonts(&["A\"B".into(), "C\\D".into(), "</style>".into()]);
+    assert!(css.starts_with(r#""A\"B", "C\\D", "\3c /style>""#), "{css}");
+    assert!(!css.contains("</style>"), "{css}");
+    assert!(css.ends_with(r#""JetBrains Mono", Menlo, monospace"#), "{css}");
+    assert_eq!(css_code_fonts(&[]), r#""JetBrains Mono", Menlo, monospace"#);
+}
+
+/// A folder holding an executable `ghostty` script with `body`.
+fn fake_ghostty(body: &str) -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ghostty");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+#[test]
+fn fonts_from_ghostty_binary() {
+    let dir = fake_ghostty("[ \"$1\" = +show-config ] && echo 'font-family = Jetendard'");
+    let limit = std::time::Duration::from_secs(1);
+    assert_eq!(fonts_from(Some("Ghostty"), Some(dir.path()), limit), ["Jetendard"]);
+    assert!(fonts_from(Some("WezTerm"), Some(dir.path()), limit).is_empty());
+    assert!(fonts_from(None, Some(dir.path()), limit).is_empty());
+    assert!(fonts_from(Some("ghostty"), None, limit).is_empty());
+}
+
+#[test]
+fn hanging_ghostty_is_cut_off() {
+    let dir = fake_ghostty("sleep 5; echo 'font-family = Late'");
+    let start = std::time::Instant::now();
+    assert!(fonts_from(Some("ghostty"), Some(dir.path()), std::time::Duration::from_secs(1)).is_empty());
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "{:?}", start.elapsed());
+}
+
+#[test]
+fn missing_or_failing_ghostty_is_empty() {
+    let empty = tempfile::tempdir().unwrap();
+    let limit = std::time::Duration::from_secs(1);
+    assert!(fonts_from(Some("ghostty"), Some(empty.path()), limit).is_empty());
+    let failing = fake_ghostty("echo 'font-family = Half'; exit 3");
+    assert!(fonts_from(Some("ghostty"), Some(failing.path()), limit).is_empty());
+}

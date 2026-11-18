@@ -226,3 +226,83 @@ pub fn syntax_theme(colors: &TermColors, text: Rgb, comment: Rgb) -> Option<synt
         ..Theme::default()
     })
 }
+
+/// The `font-family` values of `ghostty +show-config` output, in order; an empty value clears the list so far, as in
+/// Ghostty's configuration.
+pub fn ghostty_fonts(show_config: &str) -> Vec<String> {
+    let mut fonts = Vec::new();
+    for line in show_config.lines() {
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if key.trim() != "font-family" {
+            continue;
+        }
+        let value = value.trim();
+        let value = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(value);
+        if value.is_empty() {
+            fonts.clear();
+        } else {
+            fonts.push(value.to_string());
+        }
+    }
+    fonts
+}
+
+/// Ghostty's font families when `term_program` names Ghostty and `bin_dir` holds its binary: `ghostty +show-config`,
+/// given `limit` to answer. Empty otherwise, or when the command fails or takes too long.
+pub fn fonts_from(term_program: Option<&str>, bin_dir: Option<&std::path::Path>, limit: std::time::Duration) -> Vec<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let (Some(program), Some(dir)) = (term_program, bin_dir) else { return Vec::new() };
+    if !program.eq_ignore_ascii_case("ghostty") {
+        return Vec::new();
+    }
+    let Ok(mut child) = Command::new(dir.join("ghostty"))
+        .arg("+show-config")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    // Read on a thread so a full pipe never stalls the command; it is left behind if the command is killed.
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        text
+    });
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return reader.join().map(|t| ghostty_fonts(&t)).unwrap_or_default(),
+            Ok(Some(_)) | Err(_) => return Vec::new(),
+            Ok(None) if start.elapsed() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Vec::new();
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
+/// `fonts_from` for the terminal this process runs in: herdr panes carry the environment of the terminal the herdr
+/// server started in (`TERM_PROGRAM`, `GHOSTTY_BIN_DIR`).
+pub fn read_code_fonts() -> Vec<String> {
+    let program = std::env::var("TERM_PROGRAM").ok();
+    let dir = std::env::var_os("GHOSTTY_BIN_DIR").map(std::path::PathBuf::from);
+    fonts_from(program.as_deref(), dir.as_deref(), std::time::Duration::from_secs(1))
+}
+
+/// The CSS font list for code and source text: `families` as CSS strings, then peek's own.
+pub fn css_code_fonts(families: &[String]) -> String {
+    let mut css = String::new();
+    for f in families {
+        // `<` escaped too: the list sits in a <style> element, which a `</style>` in a name would end.
+        let quoted = f.replace('\\', "\\\\").replace('"', "\\\"").replace('<', "\\3c ");
+        css.push_str(&format!("\"{quoted}\", "));
+    }
+    css.push_str("\"JetBrains Mono\", Menlo, monospace");
+    css
+}
