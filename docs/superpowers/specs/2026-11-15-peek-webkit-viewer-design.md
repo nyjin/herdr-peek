@@ -150,9 +150,27 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 
 ## Input
 
-- Raw mode. Mouse reports in SGR pixels: `?1000h ?1003h ?1006h ?1016h` (clicks, moves for hover, wheel).
-- Wheel scrolls. A click on the page maps the pixel to page coordinates; `elementFromPoint(...).closest('a')` gives
-  the link: a local file opens in the same viewer and pushes history; a web address goes to `open`.
+Changed 2026-11-20 (text selection and link hover; design: `2026-11-19-peek-text-selection-and-link-hover-design.md`).
+
+- Raw mode. Mouse reports in SGR pixels: `?1000h ?1003h ?1006h ?1016h` (presses, releases, drags and moves, wheel).
+  `gesture` tells a click, a drag, a double-click (the system's double-click interval) and hover apart.
+- Wheel scrolls.
+- A click (press and release in one cell) follows a link on release, so a drag that starts on a link does not open
+  it. The pixel becomes a document point (CSS px: device px / (device pixel ratio × page zoom), plus the view's top);
+  peek's hit script scrolls that point into the web view and takes `elementFromPoint(...).closest('a')`. A local file
+  opens in the same viewer and pushes history; a web address goes to `open`; `#anchor` scrolls.
+- A drag selects from the press to the pointer; a double-click selects a word (`Intl.Segmenter`, Korean included; at
+  a word's end, that word). Releasing copies the rendered text as plain text, as Safari copies it (the source view:
+  the file's lines without line numbers), with a pasteboard mark that select to open skips, and a toast
+  `● Copied to clipboard` stands for 2 s. The selection is drawn as translucent strips over the tiles in herdr's own
+  selection colour; `Esc` (when neither the find row nor the `…` row is open), a click and another page take it away;
+  zoom and a pane resize keep it.
+- Hovering a link shows where a click would go on the last row (the status row: a file's path, a web address, an
+  `#anchor`), in an inverted pill like the toast's, at the row's left end; the page draws one row shorter meanwhile.
+  A toast wins over it; while the button is held it gives way to the page; while the pointer is on that row it does
+  not change, and a click there follows the link it shows.
+- Pointer scripts (hit tests, selection) run one at a time, and never between a capture's or a screenshot's scroll
+  and its snapshot.
 - Default keys: `j`/`k`/↑/↓ a few lines, `space`/`b`/PgDn/PgUp a screen, `g`/`G` top/bottom, `/` find (keys on the
   find row: "Top bar"), `r` reload, `v` rendered/source (was `t` until 2026-11-17), `+`/`-`/`0` zoom in/out/reset,
   `s` screenshot, `o` open in browser, `h`/Backspace back, `q` close.
@@ -186,6 +204,12 @@ find (a pattern sets its own word bounds); match case goes with either (`FindQue
 
 `pageZoom`, 50-200 % in 10 % steps, remembered in the state folder; the element at the top of the screen stays at the
 top. Measured re-layout 38-40 ms plus capture.
+
+At zoom Z % one CSS px is Z / 100 view points, while scroll positions, the document's height and client rects stay in
+CSS px: every conversion between device px (or rows) and CSS px uses the device pixel ratio × the zoom (fixed
+2026-11-20; before, tiles after the first left gaps or overlapped at any zoom but 100 %). WebKit stops a scroll at
+whole CSS px and whole points, short of a fractional position, so at zooms other than 100 % the web view is 4 pt
+taller than a tile and a capture keeps the whole tile in view.
 
 ## Screenshot
 
@@ -270,6 +294,9 @@ the selection was made in. `copy_on_select` and `[[startup]]` hooks exist in her
   socket stops answering twice in a row, 5 s apart (a live handoff reruns the startup hook under the new server).
 - Every 150 ms it reads the pasteboard's change count (`NSPasteboard.changeCount`), not its contents. Only when the
   count changed does it read the string, and only when select to open is on.
+- A change that carries peek's own mark (pasteboard type `local.peek.copy`, written with the viewer's text selection
+  copies since 2026-11-20) is skipped, so a path copied in the viewer never opens through select to open. herdr's
+  next copy clears the mark, as any write to the pasteboard does.
 - The text is kept in memory for the checks below and never written anywhere; the watcher's `watch.log` in the state
   folder records what it opened and its errors only.
 
@@ -424,3 +451,19 @@ For the review:
 - Not checked here: a token created with scopes is said to work only through `api.atlassian.com/ex/...`, not the
   site's own address that peek called; Atlassian API tokens are said to expire (at most a year). The 401 page covered
   an expired token.
+
+## Text selection, copy and link hover (2026-11-20)
+
+Design: `2026-11-19-peek-text-selection-and-link-hover-design.md`; plan:
+`docs/superpowers/plans/2026-11-20-peek-text-selection-and-link-hover.md`. Built as designed ("Input" above
+describes the result); hand test record: `evals/results.md`.
+
+Differences from that design, and what building it found:
+
+- The hit test and the selection script take a document point and scroll it into the web view themselves. Scrolled
+  to the view's top, a point missed near the document's end (the view cannot scroll that far) and in panes taller
+  than one tile (the web view is one tile tall).
+- Page zoom was wrong in the viewer's arithmetic at any zoom but 100 % (it converted with the device pixel ratio
+  alone); fixed as described in "Zoom".
+- The status row never moves the page: the scroll limit counts the bar and a toast, not the status row.
+- `prefetch` waits while the button is held and starts again after any release.

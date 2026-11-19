@@ -52,7 +52,7 @@ The top row of the viewer is a bar: the document's name, then `⟳ Reload`, `⌕
 | `+` `-` `0` | zoom in, out, reset (50-200 %, remembered) |
 | `s` | screenshot of the screen, also copied to the clipboard; a toast at the bottom says where it was saved |
 | `o` | open in the browser (a local document as a page with its images; a link at its address) |
-| a click on a link | a local file opens here, a web address in the browser, `#anchor` scrolls |
+| a click on a link | on release: a local file opens here, a web address in the browser, `#anchor` scrolls |
 | `h` Backspace | back |
 | `q` | close the viewer |
 
@@ -64,6 +64,13 @@ key = "prefix+v"
 type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
+
+### Select and copy
+
+- **Drag** over the page to select text, or **double-click** a word (Korean words too). **Letting go copies** the text as the page shows it; in the source view, the file's lines without line numbers. A toast at the bottom says "Copied to clipboard".
+- The selection is drawn in herdr's own selection colour and stays until **`Esc`**, a click, or another page; zoom and resizing the pane keep it.
+- **Hovering a link** shows where it goes on the bottom row; clicking that row follows it. A click follows a link when you let go, so a drag that starts on a link selects instead of opening it.
+- Text copied in the viewer never opens anything through select to open.
 
 ## Colours and fonts
 
