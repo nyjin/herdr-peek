@@ -4,6 +4,7 @@
 //! Platform-neutral modules build and test anywhere; `mac` holds the parts that need macOS (WebKit, FSEvents,
 //! Keychain, clipboard).
 pub mod fetch;
+pub mod gesture;
 pub mod herdr;
 pub mod kitty;
 pub mod link;
