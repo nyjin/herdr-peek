@@ -310,3 +310,17 @@ fn status_pill_is_inverted_at_the_left() {
     assert!(row.starts_with("\x1b[24;1H\x1b[2K\x1b[7m x "), "{row:?}");
     assert!(row.ends_with("\x1b[27m"), "{row:?}");
 }
+
+#[test]
+fn status_never_carries_control_characters() {
+    // a link can name a file `%1b]0;x%07`: decoded, that is a terminal escape sequence
+    for href in ["file:///a/%1b]0;x%07", "file:///a/b%0a%0dc", "#a\u{1b}b", "https://x/\u{7}y\u{9b}z"] {
+        for width in [80, 12] {
+            let shown = status_text(href, width);
+            assert!(!shown.chars().any(char::is_control), "{href:?} -> {shown:?}");
+            assert!(display_width(&shown) <= width, "{shown:?}");
+        }
+    }
+    assert_eq!(status_text("#a\u{1b}b", 80), "#a\u{fffd}b");
+    assert_eq!(status_text("file:///a/%1b]0;x%07", 80), "/a/\u{fffd}]0;x\u{fffd}");
+}

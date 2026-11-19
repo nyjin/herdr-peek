@@ -425,9 +425,12 @@ pub fn render_toast(text: &str, row: u16, cols: u16) -> String {
 /// (decoded, `shorten_path` when too long), anything else (`#anchor`, web and mail addresses) as written, its end
 /// cut with `…` when too long.
 pub fn status_text(href: &str, width: usize) -> String {
+    // The text comes from the page and is drawn raw: a control character (`%1b` decodes to ESC) would be a terminal
+    // command, so each becomes U+FFFD before anything measures or draws it.
+    let plain = |s: &str| s.chars().map(|c| if c.is_control() { '\u{fffd}' } else { c }).collect::<String>();
     match href.strip_prefix("file://") {
-        Some(rest) => shorten_path(&percent_decode(rest), width),
-        None => cut(href, width, '\u{2026}'),
+        Some(rest) => shorten_path(&plain(&percent_decode(rest)), width),
+        None => cut(&plain(href), width, '\u{2026}'),
     }
 }
 
