@@ -295,6 +295,14 @@ fn view_rows(v: &Viewer) -> u32 {
     v.g.rows.saturating_sub(FIRST_ROW - 1 + last).max(1) as u32
 }
 
+/// Rows that limit how far the page scrolls: all but the bar, and but the last while a toast stands there. The
+/// status row does not count, so its coming, going or giving way to a held button never moves the page; at the
+/// document's end the last row may stay under its pill.
+fn scroll_rows(v: &Viewer) -> u32 {
+    let toast = v.toast.is_some() as u16;
+    v.g.rows.saturating_sub(FIRST_ROW - 1 + toast).max(1) as u32
+}
+
 /// Whether the status row shows: a link is under the pointer, no toast stands and the button is not held.
 fn status_shown(v: &Viewer) -> bool {
     v.status.is_some() && v.toast.is_none() && !v.gestures.held()
@@ -542,7 +550,7 @@ fn draw(t_key: f64) {
             v.dirty = true;
             return false;
         }
-        let max_top = doc_rows(v).saturating_sub(view_rows(v) as u64);
+        let max_top = doc_rows(v).saturating_sub(scroll_rows(v) as u64);
         v.view_top = v.view_top.min(max_top);
         true
     });
@@ -673,7 +681,7 @@ fn prefetch() {
 
 fn scroll(rows: i64, t_key: f64) {
     with(|v| {
-        let max_top = doc_rows(v).saturating_sub(view_rows(v) as u64) as i64;
+        let max_top = doc_rows(v).saturating_sub(scroll_rows(v) as u64) as i64;
         v.view_top = (v.view_top as i64 + rows).clamp(0, max_top.max(0)) as u64;
     });
     draw(t_key);
