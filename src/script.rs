@@ -228,12 +228,16 @@ const SEL: &str = r#"function (a) {
     case 'word': {
       const p = point();
       if (p && p.node.nodeType === 3 && p.node.data) {
-        // the word segment holding the offset; at the node's end, the last one
-        let hit = null;
+        // The word segment holding the offset; at the node's end, the last one. At a boundary the offset also lies
+        // just after the previous segment (a click on a word's right half reports it): a word beats a space or
+        // punctuation there.
+        let hit = null, prev = null;
         for (const seg of new Intl.Segmenter(undefined, { granularity: 'word' }).segment(p.node.data)) {
-          hit = seg;
-          if (seg.index + seg.segment.length > p.offset) break;
+          if (seg.index + seg.segment.length > p.offset) { hit = seg; break; }
+          prev = seg;
         }
+        if (!hit) hit = prev;
+        else if (!hit.isWordLike && prev && prev.isWordLike && prev.index + prev.segment.length === p.offset) hit = prev;
         if (hit) {
           const range = new Range();
           range.setStart(p.node, hit.index);
