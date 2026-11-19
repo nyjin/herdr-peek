@@ -1,7 +1,7 @@
-//! The clipboard: a PNG put on it (screenshots), and the watcher's view of it (select to open).
+//! The clipboard: a PNG or text put on it (screenshots, selections), and the watcher's view of it (select to open).
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString};
-use objc2_foundation::NSData;
+use objc2_foundation::{NSData, NSString};
 use std::io;
 use std::path::Path;
 
@@ -19,6 +19,29 @@ impl crate::watcher::Clipboard for Pasteboard {
             let text = NSPasteboard::generalPasteboard().stringForType(unsafe { NSPasteboardTypeString })?;
             Some(text.to_string())
         })
+    }
+
+    fn from_peek(&self) -> bool {
+        autoreleasepool(|_| {
+            NSPasteboard::generalPasteboard()
+                .types()
+                .is_some_and(|types| types.iter().any(|t| t.to_string() == crate::watcher::PEEK_COPY_TYPE))
+        })
+    }
+}
+
+/// Put `text` on the clipboard as plain text, with peek's private mark next to it so the watcher does not take the
+/// copy for a path to open.
+pub fn copy_text(text: &str) -> io::Result<()> {
+    let board = NSPasteboard::generalPasteboard();
+    board.clearContents();
+    let mark = NSString::from_str(crate::watcher::PEEK_COPY_TYPE);
+    let ok = board.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString })
+        && board.setString_forType(&NSString::from_str("1"), &mark);
+    if ok {
+        Ok(())
+    } else {
+        Err(io::Error::other("the clipboard refused the text"))
     }
 }
 

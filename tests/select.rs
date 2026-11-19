@@ -5,7 +5,7 @@
 //! selected. The strings are the sample content those rules are about.
 use peek::resolve::Context;
 use peek::select::{forms, path_shaped, resolve, source_pane, usable, Screen};
-use peek::watcher::{Clipboard, Poll};
+use peek::watcher::{selected_text, Clipboard, Poll};
 use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -194,16 +194,24 @@ struct FakeClipboard {
     count: Cell<isize>,
     text: RefCell<Option<String>>,
     reads: Cell<usize>,
+    peek: Cell<bool>,
 }
 
 impl FakeClipboard {
     fn new(count: isize, text: &str) -> Self {
-        FakeClipboard { count: Cell::new(count), text: RefCell::new(Some(text.into())), reads: Cell::new(0) }
+        FakeClipboard { count: Cell::new(count), text: RefCell::new(Some(text.into())), reads: Cell::new(0), peek: Cell::new(false) }
     }
 
     fn copy(&self, text: &str) {
         self.count.set(self.count.get() + 1);
         *self.text.borrow_mut() = Some(text.into());
+        self.peek.set(false);
+    }
+
+    /// A copy peek made itself (carrying peek's mark).
+    fn copy_from_peek(&self, text: &str) {
+        self.copy(text);
+        self.peek.set(true);
     }
 }
 
@@ -215,6 +223,10 @@ impl Clipboard for FakeClipboard {
     fn text(&self) -> Option<String> {
         self.reads.set(self.reads.get() + 1);
         self.text.borrow().clone()
+    }
+
+    fn from_peek(&self) -> bool {
+        self.peek.get()
     }
 }
 
@@ -228,5 +240,30 @@ fn poll_ignores_what_was_there_and_reads_only_after_a_change() {
     assert!(poll.changed(&clip));
     assert!(!poll.changed(&clip));
     // Polling looks at the count only; the text is read by the caller, once per change.
+    assert_eq!(clip.reads.get(), 0);
+}
+
+#[test]
+fn peek_copies_do_not_open_files() {
+    let clip = FakeClipboard::new(1, "before");
+    let mut poll = Poll::new(&clip);
+    clip.copy_from_peek("docs/a.md");
+    assert_eq!(selected_text(&mut poll, &clip, true), None);
+    assert_eq!(clip.reads.get(), 0);
+    clip.copy("docs/a.md");
+    assert_eq!(selected_text(&mut poll, &clip, true), Some("docs/a.md".to_string()));
+    // nothing changed since
+    assert_eq!(selected_text(&mut poll, &clip, true), None);
+}
+
+#[test]
+fn select_to_open_off_reads_nothing() {
+    let clip = FakeClipboard::new(1, "before");
+    let mut poll = Poll::new(&clip);
+    clip.copy("docs/a.md");
+    assert_eq!(selected_text(&mut poll, &clip, false), None);
+    assert_eq!(clip.reads.get(), 0);
+    // the change was used up: turning select to open on does not bring it back
+    assert_eq!(selected_text(&mut poll, &clip, true), None);
     assert_eq!(clip.reads.get(), 0);
 }

@@ -32,7 +32,15 @@ pub trait Clipboard {
     /// Goes up with every write to the clipboard; reading it does not read the contents.
     fn change_count(&self) -> isize;
     fn text(&self) -> Option<String>;
+    /// Whether the clipboard's current contents were put there by peek itself (they carry `PEEK_COPY_TYPE`).
+    fn from_peek(&self) -> bool {
+        false
+    }
 }
+
+/// The private pasteboard type peek's own copies carry, next to the text. herdr's next copy clears it, as any write
+/// to the pasteboard does.
+pub const PEEK_COPY_TYPE: &str = "local.peek.copy";
 
 /// Tells a clipboard change from the previous look; what was there when it started does not count.
 pub struct Poll {
@@ -50,6 +58,16 @@ impl Poll {
         self.last = now;
         changed
     }
+}
+
+/// The text to look for a path in, once per clipboard change: always looks at the change count (so a change is used
+/// up even when nothing reads it), then reads the text only when something changed, `enabled` is on and the change
+/// is not peek's own copy.
+pub fn selected_text(poll: &mut Poll, clip: &impl Clipboard, enabled: bool) -> Option<String> {
+    if !poll.changed(clip) || !enabled || clip.from_peek() {
+        return None;
+    }
+    clip.text()
 }
 
 /// Runs until the herdr server behind `$HERDR_SOCKET_PATH` goes away. Returns at once when another watcher holds
@@ -73,14 +91,12 @@ pub fn run(clip: &impl Clipboard) -> io::Result<()> {
     let mut next_check = Instant::now() + every;
     loop {
         thread::sleep(TICK);
-        if poll.changed(clip) && state::select_enabled() {
+        if let Some(text) = selected_text(&mut poll, clip, state::select_enabled()) {
             let seen = Instant::now();
-            if let Some(text) = clip.text() {
-                match link::run_select(&text) {
-                    Ok(Some(opened)) => log.line(&format!("opened {opened} ({} ms)", seen.elapsed().as_millis())),
-                    Ok(None) => {}
-                    Err(e) => log.line(&format!("error: {e}")),
-                }
+            match link::run_select(&text) {
+                Ok(Some(opened)) => log.line(&format!("opened {opened} ({} ms)", seen.elapsed().as_millis())),
+                Ok(None) => {}
+                Err(e) => log.line(&format!("error: {e}")),
             }
         }
         if Instant::now() >= next_check {
