@@ -36,7 +36,8 @@ struct Find {
     index: i64,
 }
 
-/// A script about the point under the pointer (viewport CSS px from `gesture::page_point`), run by `next_job`.
+/// A script about the point under the pointer (document CSS px: `gesture::page_point` plus the view's top), run by
+/// `next_job`.
 enum Job {
     /// The link under a resting pointer, for the status row.
     Hover { x: f64, y: f64 },
@@ -93,6 +94,8 @@ struct Viewer {
     /// Pointer scripts waiting to run: one at a time, never while a capture runs (`next_job`).
     jobs: VecDeque<Job>,
     job_running: bool,
+    /// A screenshot is between its scroll and its snapshot: pointer scripts, which scroll, wait (`next_job`).
+    shooting: bool,
     /// The destination of the link under the pointer, shown on the last row (the status row) unless a toast stands
     /// there or the button is held.
     status: Option<String>,
@@ -186,6 +189,7 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             gestures: Gestures::new(NSEvent::doubleClickInterval() * 1000.0),
             jobs: VecDeque::new(),
             job_running: false,
+            shooting: false,
             status: None,
             caret: None,
             title: "peek".into(),
@@ -877,15 +881,20 @@ fn screenshot() {
         };
         let (r, path) = with(|v| (v.r.clone(), v.base.join("screenshots").join(name.replace('/', "_"))));
         let shown = path.clone();
-        r.snapshot_png(top_css, h_css, path, move |res| match res {
-            Ok(()) => {
-                let copied = super::clipboard::copy_png(&shown).is_ok();
-                let (head, tail) = ("\u{25cf} Screenshot saved to ", if copied { " \u{b7} copied to clipboard" } else { "" });
-                let room = with(|v| v.g.cols as usize).saturating_sub(2 + term::display_width(head) + term::display_width(tail));
-                toast(format!("{head}{}{tail}", term::shorten_path(&shown.to_string_lossy(), room)));
-                log(serde_json::json!({"ev": "screenshot", "path": shown}));
+        with(|v| v.shooting = true);
+        r.snapshot_png(top_css, h_css, path, move |res| {
+            with(|v| v.shooting = false);
+            match res {
+                Ok(()) => {
+                    let copied = super::clipboard::copy_png(&shown).is_ok();
+                    let (head, tail) = ("\u{25cf} Screenshot saved to ", if copied { " \u{b7} copied to clipboard" } else { "" });
+                    let room = with(|v| v.g.cols as usize).saturating_sub(2 + term::display_width(head) + term::display_width(tail));
+                    toast(format!("{head}{}{tail}", term::shorten_path(&shown.to_string_lossy(), room)));
+                    log(serde_json::json!({"ev": "screenshot", "path": shown}));
+                }
+                Err(e) => toast(format!("\u{2715} Screenshot failed: {e}")),
             }
-            Err(e) => toast(format!("\u{2715} Screenshot failed: {e}")),
+            next_job();
         });
     });
 }
@@ -962,21 +971,21 @@ fn job(j: Job) {
     next_job();
 }
 
-/// Run the first waiting pointer script, scrolled to the view as its tiles were captured. Never while another runs
-/// or a capture is between its scroll and its snapshot (the capture's end calls this again), nor while a page
+/// Run the first waiting pointer script (it scrolls the page to its point itself). Never while another runs or a
+/// capture or screenshot is between its scroll and its snapshot (their ends call this again), nor while a page
 /// loads; each reply, once handled, starts the next.
 fn next_job() {
     let next = with(|v| {
-        if v.job_running || v.busy || !v.loaded {
+        if v.job_running || v.busy || v.shooting || !v.loaded {
             return None;
         }
         let j = v.jobs.pop_front()?;
         v.job_running = true;
-        Some((v.r.clone(), v.marker, v.view_top as f64 * v.g.cell_h as f64 / v.dpr, j))
+        Some((v.r.clone(), v.marker, j))
     });
-    let Some((r, marker, top_css, j)) = next else { return };
+    let Some((r, marker, j)) = next else { return };
     let js = match j {
-        Job::Hover { x, y } | Job::Click { x, y } => format!("window.scrollTo(0, {top_css}); {}", script::hit(x, y)),
+        Job::Hover { x, y } | Job::Click { x, y } => script::hit(x, y),
     };
     r.eval(&js, move |reply| {
         // a reply about a page that has been replaced since is dropped
@@ -1215,11 +1224,12 @@ fn on_mouse(m: term::Mouse, t: f64) {
 
 /// A press on the page, or any move or release, as a gesture (every move and release counts, so a drag that leaves
 /// the page still ends): a click follows the link under it on release, a resting pointer asks for the link under
-/// it. Points are taken on the page as it stood before the report.
+/// it. Points are taken on the page as it stood before the report, in document CSS px.
 fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
     let (gesture, (x, y), was, on_page) = with(|v| {
         let was = status_shown(v);
-        let point = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), v.dpr);
+        let (x, y) = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), v.dpr);
+        let point = (x, y + v.view_top as f64 * v.g.cell_h as f64 / v.dpr);
         let gesture = v.gestures.on(m.kind, m.button, cell, t);
         if on_bar && m.kind == MouseKind::Move && m.button == 3 {
             // the bar's tooltips take over from the status row

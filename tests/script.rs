@@ -79,7 +79,9 @@ fn hit_returns_closest_anchor_href() {
     let s = hit(12.5, 40.0);
     assert_replies_json(&s);
     assert_eq!(args(&s), json!({"x": 12.5, "y": 40.0}));
-    assert!(s.contains("document.elementFromPoint(a.x, a.y)"));
+    // The point is in document px: the script scrolls it into the viewport, then tests it there.
+    assert!(s.contains("window.scrollTo(0, Math.max(0, a.y - window.innerHeight / 2))"));
+    assert!(s.contains("document.elementFromPoint(a.x, a.y - window.scrollY)"));
     assert!(s.contains(".closest('a[href]')"));
     // An in-page link resolves against <base> (the document's folder), so its raw "#..." is returned instead.
     assert!(s.contains("getAttribute('href')") && s.contains("startsWith('#')"));
@@ -142,10 +144,10 @@ fn selection_scripts_carry_their_arguments() {
         (SelOp::Extend { x: 99.0, y: 7.0 }, "extend"),
     ];
     for (op, name) in points {
-        let s = selection(120.5, op);
+        let s = selection(op);
         assert_replies_json(&s);
         let a = args(&s);
-        assert_eq!(a["top"], json!(120.5));
+        assert!(a.get("top").is_none(), "{name}");
         assert_eq!(a["op"], json!(name));
         let (x, y) = match op {
             SelOp::Press { x, y } | SelOp::Word { x, y } | SelOp::Extend { x, y } => (x, y),
@@ -154,23 +156,25 @@ fn selection_scripts_carry_their_arguments() {
         assert_eq!((a["x"].as_f64(), a["y"].as_f64()), (Some(x), Some(y)), "{name}");
     }
     for (op, name) in [(SelOp::Rects, "rects"), (SelOp::Text, "text"), (SelOp::Clear, "clear")] {
-        let s = selection(0.0, op);
+        let s = selection(op);
         assert_replies_json(&s);
         let a = args(&s);
         assert_eq!(a["op"], json!(name));
-        assert_eq!(a["top"], json!(0.0));
-        assert!(a.get("x").is_none() && a.get("y").is_none(), "{name}");
+        assert!(a.get("top").is_none() && a.get("x").is_none() && a.get("y").is_none(), "{name}");
     }
-    let s = selection(0.0, SelOp::Rects);
-    assert!(s.contains("window.scrollTo(0, a.top)") && s.contains("caretRangeFromPoint") && s.contains("peekSel"));
+    // Points are in document px, scrolled into the viewport (as `hit` does) only where a point is taken.
+    let s = selection(SelOp::Rects);
+    assert!(s.contains("window.scrollTo(0, Math.max(0, a.y - window.innerHeight / 2))"), "{s}");
+    assert!(s.contains("caretRangeFromPoint(a.x, a.y - window.scrollY)") && s.contains("peekSel"), "{s}");
+    assert!(!s.contains("a.top"), "{s}");
 }
 
 #[test]
 fn selection_coordinates_stay_json() {
     // NaN and infinity are not JSON: they become 0 rather than null or a bare word in the script
-    let s = selection(f64::INFINITY, SelOp::Extend { x: f64::NAN, y: f64::NEG_INFINITY });
+    let s = selection(SelOp::Extend { x: f64::NAN, y: f64::NEG_INFINITY });
     assert_replies_json(&s);
     let a = args(&s);
-    assert_eq!((a["top"].as_f64(), a["x"].as_f64(), a["y"].as_f64()), (Some(0.0), Some(0.0), Some(0.0)));
+    assert_eq!((a["x"].as_f64(), a["y"].as_f64()), (Some(0.0), Some(0.0)));
     assert!(!s.contains("NaN") && !s.contains("inf"), "{s}");
 }

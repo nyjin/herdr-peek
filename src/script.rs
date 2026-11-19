@@ -108,7 +108,9 @@ const FIND_CLEAR: &str = "(() => { CSS.highlights.delete('peek-find'); CSS.highl
                           return JSON.stringify(null); })()";
 
 const HIT: &str = r#"function (a) {
-  const e = document.elementFromPoint(a.x, a.y);
+  // The view may not reach the document point (near the end, or a pane taller than the view): scroll it in first.
+  window.scrollTo(0, Math.max(0, a.y - window.innerHeight / 2));
+  const e = document.elementFromPoint(a.x, a.y - window.scrollY);
   const link = e && e.closest('a[href]');
   if (!link) return JSON.stringify(null);
   const raw = link.getAttribute('href');
@@ -144,15 +146,16 @@ const READY: &str = r#"function (a) {
   return JSON.stringify([ready, d ? d.scrollHeight : 0, Math.max(0, Math.round(y))]);
 }"#;
 
-/// The selection: `window.peekSel = { anchor, range }`, a point and a `Range` that only this script touches. Every
-/// call first scrolls to `a.top`, so rectangles in document px and points in viewport px agree. A point is
-/// `caretRangeFromPoint`; when it finds nothing the state stays as it is. Replies: rectangles
+/// The selection: `window.peekSel = { anchor, range }`, a point and a `Range` that only this script touches. Points
+/// come in document px; the point ops scroll their point into the viewport and take `caretRangeFromPoint` there;
+/// when it finds nothing the state stays as it is. Replies: rectangles
 /// `[[x, y, w, h], ...]` in document CSS px (`word`, `extend`, `rects`), the text or null (`text`), null otherwise.
 const SEL: &str = r#"function (a) {
-  window.scrollTo(0, a.top);
   const st = window.peekSel || (window.peekSel = { anchor: null, range: null });
+  // The document point, scrolled into the viewport first as `hit` does; only the point ops scroll.
   const point = () => {
-    const r = document.caretRangeFromPoint(a.x, a.y);
+    window.scrollTo(0, Math.max(0, a.y - window.innerHeight / 2));
+    const r = document.caretRangeFromPoint(a.x, a.y - window.scrollY);
     return r ? { node: r.startContainer, offset: r.startOffset } : null;
   };
   // Not painted and not copied: line numbers, and the source view's note row (it is not a file line).
@@ -313,10 +316,11 @@ pub fn find_clear() -> String {
     FIND_CLEAR.to_string()
 }
 
-/// The `href` of the link under the viewport point, or `null`. A link within the page (`#...`) comes back as
-/// written; any other is resolved to an absolute URL.
-pub fn hit(x_css: f64, y_css: f64) -> String {
-    call(HIT, &serde_json::json!({ "x": x_css, "y": y_css }))
+/// The `href` of the link under the document point (CSS px from the document's top left), or `null`. The script
+/// scrolls the point into the viewport first. A link within the page (`#...`) comes back as written; any other is
+/// resolved to an absolute URL.
+pub fn hit(x_css: f64, y_doc: f64) -> String {
+    call(HIT, &serde_json::json!({ "x": x_css, "y": y_doc }))
 }
 
 /// `[element index, offset]` of the element at the top of the viewport, to keep the reading position: the index
@@ -344,7 +348,7 @@ pub fn images_pending() -> String {
     IMAGES_PENDING.to_string()
 }
 
-/// What the selection script does; points are viewport CSS px.
+/// What the selection script does; points are document CSS px (from the document's top left).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SelOp {
     /// The button went down: the selection starts at the point. Reply `null`.
@@ -362,17 +366,18 @@ pub enum SelOp {
     Clear,
 }
 
-/// The selection script: scroll to `top_css` (the page's scroll, as the tiles were captured at) and do `op`. A
-/// coordinate that is not finite is sent as 0.
-pub fn selection(top_css: f64, op: SelOp) -> String {
+/// The selection script doing `op`. The point ops (`Press`, `Word`, `Extend`) scroll their point into the viewport
+/// first; the others do not scroll (rectangles come back in document CSS px either way). A coordinate that is not
+/// finite is sent as 0.
+pub fn selection(op: SelOp) -> String {
     let n = |v: f64| if v.is_finite() { v } else { 0.0 };
     let args = match op {
-        SelOp::Press { x, y } => serde_json::json!({ "top": n(top_css), "op": "press", "x": n(x), "y": n(y) }),
-        SelOp::Word { x, y } => serde_json::json!({ "top": n(top_css), "op": "word", "x": n(x), "y": n(y) }),
-        SelOp::Extend { x, y } => serde_json::json!({ "top": n(top_css), "op": "extend", "x": n(x), "y": n(y) }),
-        SelOp::Rects => serde_json::json!({ "top": n(top_css), "op": "rects" }),
-        SelOp::Text => serde_json::json!({ "top": n(top_css), "op": "text" }),
-        SelOp::Clear => serde_json::json!({ "top": n(top_css), "op": "clear" }),
+        SelOp::Press { x, y } => serde_json::json!({ "op": "press", "x": n(x), "y": n(y) }),
+        SelOp::Word { x, y } => serde_json::json!({ "op": "word", "x": n(x), "y": n(y) }),
+        SelOp::Extend { x, y } => serde_json::json!({ "op": "extend", "x": n(x), "y": n(y) }),
+        SelOp::Rects => serde_json::json!({ "op": "rects" }),
+        SelOp::Text => serde_json::json!({ "op": "text" }),
+        SelOp::Clear => serde_json::json!({ "op": "clear" }),
     };
     call(SEL, &args)
 }
