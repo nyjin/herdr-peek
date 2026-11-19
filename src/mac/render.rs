@@ -27,6 +27,18 @@ pub struct LoadInfo {
     pub top_hint: f64,
 }
 
+/// Points the view is taller than a tile at a page zoom other than 100 %. WebKit stops a scroll at whole CSS px and
+/// whole points, short of a fractional position (up to `pageZoom + 1` points short, measured at 100, 110 and 150 %),
+/// and a tile's top in CSS px is fractional at most zooms: the slack keeps the rest of the tile in view, so a capture
+/// is never cut short in the middle of the document.
+const SCROLL_SLACK_PT: f64 = 4.0;
+
+/// The slack at page zoom `zoom`: none at 100 %, which stays as it was (a tile's top is fractional there only when a
+/// tile is an odd number of device px tall).
+fn slack(zoom: f64) -> f64 {
+    if zoom == 1.0 { 0.0 } else { SCROLL_SLACK_PT }
+}
+
 #[derive(Clone)]
 pub struct Renderer {
     web: Retained<WKWebView>,
@@ -42,8 +54,10 @@ impl Renderer {
         Renderer { web }
     }
 
-    pub fn set_frame(&self, w_css: f64, h_css: f64) {
-        self.web.setFrameSize(NSSize::new(w_css, h_css));
+    /// Size the view in points: `w_pt` wide, a tile (`tile_h_pt`) tall plus the slack of its page zoom.
+    pub fn set_frame(&self, w_pt: f64, tile_h_pt: f64) {
+        let zoom = unsafe { self.web.pageZoom() };
+        self.web.setFrameSize(NSSize::new(w_pt, tile_h_pt + slack(zoom)));
     }
 
     pub fn frame(&self) -> (f64, f64) {
@@ -117,23 +131,30 @@ impl Renderer {
         });
     }
 
+    /// Set the page zoom, and the view's slack with it (the tile it holds stays as tall).
     pub fn set_zoom(&self, percent: u32) {
+        let (w, h) = self.frame();
+        let tile_h = h - slack(unsafe { self.web.pageZoom() });
         unsafe { self.web.setPageZoom(percent as f64 / 100.0) };
+        self.set_frame(w, tile_h);
     }
 
-    /// Capture the band of the page from `top_css` (CSS px; as tall as the view's frame) into a new POSIX shared
-    /// memory object `shm_name` of `w_px` x `h_px` RGBA, the page background `bg` where the document has ended.
+    /// Capture the band of the page from `top_css` (CSS px; a tile tall) into a new POSIX shared memory object
+    /// `shm_name` of `w_px` x `h_px` RGBA, the page background `bg` where the document has ended.
     pub fn capture(&self, top_css: f64, w_px: u32, h_px: u32, bg: [u8; 3], shm_name: String, done: impl FnOnce(Result<(), String>) + 'static) {
         let me = self.clone();
         let done = Rc::new(RefCell::new(Some(Box::new(done) as Box<dyn FnOnce(Result<(), String>)>)));
         self.eval(&format!("window.scrollTo(0, {top_css}); JSON.stringify(window.scrollY)"), move |s| {
             let scroll_y: f64 = s.and_then(|s| s.parse().ok()).unwrap_or(top_css);
-            let (vw, vh) = me.frame();
-            // Near the document's end the view cannot scroll as far as asked: take the part below the offset. The
-            // scroll is in CSS px, the snapshot rect in view points: one CSS px is `pageZoom` points.
+            // The scroll stops short of a fractional position, and near the document's end short of the end: take
+            // the band below the offset, a whole tile unless the document ends first. The scroll is in CSS px, the
+            // snapshot rect in view points: one CSS px is `pageZoom` points. `shown` points are in view below the
+            // scroll position, a tile (`vh`) and the slack.
             let zoom = unsafe { me.web.pageZoom() };
-            let offset = ((top_css - scroll_y) * zoom).clamp(0.0, vh);
-            let band_h = vh - offset;
+            let (vw, shown) = me.frame();
+            let vh = shown - slack(zoom);
+            let offset = ((top_css - scroll_y) * zoom).clamp(0.0, shown);
+            let band_h = vh.min(shown - offset);
             let mtm = MainThreadMarker::new().unwrap();
             let cfg = unsafe { WKSnapshotConfiguration::new(mtm) };
             unsafe {
@@ -165,14 +186,14 @@ impl Renderer {
         let done = RefCell::new(Some(done));
         self.eval(&format!("window.scrollTo(0, {top_css}); JSON.stringify(window.scrollY)"), move |s| {
             let scroll_y: f64 = s.and_then(|s| s.parse().ok()).unwrap_or(top_css);
-            let (vw, vh) = me.frame();
-            // CSS px to view points, as in `capture`
+            // CSS px to view points, and the slack below the tile, as in `capture`
+            let (vw, shown) = me.frame();
             let zoom = unsafe { me.web.pageZoom() };
-            let offset = ((top_css - scroll_y) * zoom).clamp(0.0, vh);
+            let offset = ((top_css - scroll_y) * zoom).clamp(0.0, shown);
             let mtm = MainThreadMarker::new().unwrap();
             let cfg = unsafe { WKSnapshotConfiguration::new(mtm) };
             unsafe {
-                cfg.setRect(CGRect::new(CGPoint::new(0.0, offset), CGSize::new(vw, (h_css * zoom).min(vh - offset).max(1.0))));
+                cfg.setRect(CGRect::new(CGPoint::new(0.0, offset), CGSize::new(vw, (h_css * zoom).min(shown - offset).max(1.0))));
                 cfg.setSnapshotWidth(Some(&NSNumber::new_f64(vw)));
                 cfg.setAfterScreenUpdates(true);
             }
