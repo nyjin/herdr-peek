@@ -1,6 +1,10 @@
 //! Scripts peek runs in the page through `evaluateJavaScript` (page scripts are off). Each evaluates to a JSON
 //! string. A script that takes arguments has the shape `(function (a) { ... })(<JSON>)`: the body is a constant
 //! and everything that comes from outside (query text, coordinates, marker) is a JSON value, never code.
+//!
+//! The selection (`selection`) lives in the page as `window.peekSel`, a DOM `Range` and its anchor that only peek's
+//! script knows: nothing in the page is painted for it. The script answers with the text's rectangles, which peek
+//! draws as overlay strips, and with the selected text, which peek copies.
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FindQuery {
@@ -140,6 +144,129 @@ const READY: &str = r#"function (a) {
   return JSON.stringify([ready, d ? d.scrollHeight : 0, Math.max(0, Math.round(y))]);
 }"#;
 
+/// The selection: `window.peekSel = { anchor, range }`, a point and a `Range` that only this script touches. Every
+/// call first scrolls to `a.top`, so rectangles in document px and points in viewport px agree. A point is
+/// `caretRangeFromPoint`; when it finds nothing the state stays as it is. Replies: rectangles
+/// `[[x, y, w, h], ...]` in document CSS px (`word`, `extend`, `rects`), the text or null (`text`), null otherwise.
+const SEL: &str = r#"function (a) {
+  window.scrollTo(0, a.top);
+  const st = window.peekSel || (window.peekSel = { anchor: null, range: null });
+  const point = () => {
+    const r = document.caretRangeFromPoint(a.x, a.y);
+    return r ? { node: r.startContainer, offset: r.startOffset } : null;
+  };
+  // Not painted and not copied: line numbers, and the source view's note row (it is not a file line).
+  const SKIP = 'td.n, tr.note';
+  const rects = () => {
+    const out = [], range = st.range;
+    if (!range || range.collapsed) return out;
+    const root = range.commonAncestorContainer;
+    const nodes = [];
+    if (root.nodeType === 3) {
+      nodes.push(root);
+    } else {
+      const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) if (range.intersectsNode(n)) nodes.push(n);
+    }
+    for (const n of nodes) {
+      if (n.parentElement && n.parentElement.closest(SKIP)) continue;
+      // the part of this text node inside the range
+      const part = new Range();
+      part.setStart(n, n === range.startContainer ? range.startOffset : 0);
+      part.setEnd(n, n === range.endContainer ? range.endOffset : n.data.length);
+      for (const r of part.getClientRects()) {
+        if (r.width > 0 && r.height > 0) out.push([r.left + window.scrollX, r.top + window.scrollY, r.width, r.height]);
+      }
+    }
+    return out;
+  };
+  // The source view: the code cells of the rows the range touches, each clipped to the range, one line each.
+  const sourceText = (table) => {
+    const range = st.range;
+    const rows = Array.prototype.slice.call(table.rows);
+    const rowOf = (node, fallback) => {
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      const tr = el && el.closest('tr');
+      return tr && rows.indexOf(tr) >= 0 ? rows.indexOf(tr) : fallback;
+    };
+    const lines = [];
+    for (let i = rowOf(range.startContainer, 0); i <= rowOf(range.endContainer, rows.length - 1); i++) {
+      const cell = rows[i].classList.contains('note') ? null : rows[i].querySelector('td.c');
+      if (!cell) continue;
+      // the range ends before this cell, or starts after it
+      if (range.comparePoint(cell, 0) > 0 || range.comparePoint(cell, cell.childNodes.length) < 0) continue;
+      const part = new Range();
+      part.selectNodeContents(cell);
+      if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0) part.setStart(range.startContainer, range.startOffset);
+      if (range.compareBoundaryPoints(Range.END_TO_END, part) < 0) part.setEnd(range.endContainer, range.endOffset);
+      lines.push(part.toString());
+    }
+    return lines.join('\n');
+  };
+  switch (a.op) {
+    case 'press': {
+      const p = point();
+      if (p) st.anchor = p;
+      return JSON.stringify(null);
+    }
+    case 'extend': {
+      const p = point();
+      if (p) {
+        if (!st.anchor) st.anchor = p;
+        // a collapsed range at the anchor tells which of the two points comes first
+        const probe = new Range();
+        probe.setStart(st.anchor.node, st.anchor.offset);
+        probe.collapse(true);
+        const first = probe.comparePoint(p.node, p.offset) >= 0 ? [st.anchor, p] : [p, st.anchor];
+        const range = new Range();
+        range.setStart(first[0].node, first[0].offset);
+        range.setEnd(first[1].node, first[1].offset);
+        st.range = range;
+      }
+      return JSON.stringify(rects());
+    }
+    case 'word': {
+      const p = point();
+      if (p && p.node.nodeType === 3 && p.node.data) {
+        // the word segment holding the offset; at the node's end, the last one
+        let hit = null;
+        for (const seg of new Intl.Segmenter(undefined, { granularity: 'word' }).segment(p.node.data)) {
+          hit = seg;
+          if (seg.index + seg.segment.length > p.offset) break;
+        }
+        if (hit) {
+          const range = new Range();
+          range.setStart(p.node, hit.index);
+          range.setEnd(p.node, hit.index + hit.segment.length);
+          st.range = range;
+          st.anchor = { node: p.node, offset: hit.index };
+        }
+      }
+      return JSON.stringify(rects());
+    }
+    case 'rects':
+      return JSON.stringify(rects());
+    case 'text': {
+      const range = st.range;
+      if (!range) return JSON.stringify(null);
+      const el = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+      const table = el && el.closest('table.source');
+      if (table) return JSON.stringify(sourceText(table));
+      // Safari's own rendering of the text: select the range, read it, and empty the selection again
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const text = sel.toString();
+      sel.removeAllRanges();
+      return JSON.stringify(text);
+    }
+    default:
+      st.anchor = null;
+      st.range = null;
+      return JSON.stringify(null);
+  }
+}"#;
+
 const IMAGES_PENDING: &str =
     "(() => JSON.stringify(Array.prototype.filter.call(document.images, (i) => !i.complete).length))()";
 
@@ -211,4 +338,37 @@ pub fn ready(marker: u64) -> String {
 /// Number of images not finished loading.
 pub fn images_pending() -> String {
     IMAGES_PENDING.to_string()
+}
+
+/// What the selection script does; points are viewport CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SelOp {
+    /// The button went down: the selection starts at the point. Reply `null`.
+    Press { x: f64, y: f64 },
+    /// Select the word at the point. Reply: the selection's rectangles.
+    Word { x: f64, y: f64 },
+    /// Select from where the press was to the point. Reply: the selection's rectangles.
+    Extend { x: f64, y: f64 },
+    /// The selection's rectangles again (after a re-layout). `[]` without a selection.
+    Rects,
+    /// The selected text, or `null` without a selection: rendered text as Safari copies it, in the source view the
+    /// file's lines without line numbers.
+    Text,
+    /// Forget the selection. Reply `null`.
+    Clear,
+}
+
+/// The selection script: scroll to `top_css` (the page's scroll, as the tiles were captured at) and do `op`. A
+/// coordinate that is not finite is sent as 0.
+pub fn selection(top_css: f64, op: SelOp) -> String {
+    let n = |v: f64| if v.is_finite() { v } else { 0.0 };
+    let args = match op {
+        SelOp::Press { x, y } => serde_json::json!({ "top": n(top_css), "op": "press", "x": n(x), "y": n(y) }),
+        SelOp::Word { x, y } => serde_json::json!({ "top": n(top_css), "op": "word", "x": n(x), "y": n(y) }),
+        SelOp::Extend { x, y } => serde_json::json!({ "top": n(top_css), "op": "extend", "x": n(x), "y": n(y) }),
+        SelOp::Rects => serde_json::json!({ "top": n(top_css), "op": "rects" }),
+        SelOp::Text => serde_json::json!({ "top": n(top_css), "op": "text" }),
+        SelOp::Clear => serde_json::json!({ "top": n(top_css), "op": "clear" }),
+    };
+    call(SEL, &args)
 }

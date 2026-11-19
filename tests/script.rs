@@ -1,8 +1,9 @@
 //! The scripts peek runs in the page. There is no browser here, so the tests read what Rust puts into each
 //! script: every script with arguments has the shape `(function (a) { ... })(<JSON>)`, and the JSON is where the
 //! query, flags, coordinates and marker go. What the bodies do in a page was checked by hand in a WebKit view
-//! with page scripts off (the spike renderer's `eval` command).
-use peek::script::{anchor, find, find_clear, hit, images_pending, ready, restore, FindQuery};
+//! with page scripts off (the spike renderer's `eval` command); the selection script's behaviour is checked by hand
+//! against the spec's copy table (plan task 8).
+use peek::script::{anchor, find, find_clear, hit, images_pending, ready, restore, selection, FindQuery, SelOp};
 use serde_json::{json, Value};
 
 /// The JSON argument of a script `(function (a) { ... })(<JSON>)`.
@@ -131,4 +132,45 @@ fn whole_word_and_regex_exclude_each_other_but_case_goes_with_both() {
     assert!(q.case && q.regex && !q.word);
     q.toggle("regex");
     assert!(!q.regex && !q.word && q.case);
+}
+
+#[test]
+fn selection_scripts_carry_their_arguments() {
+    let points = [
+        (SelOp::Press { x: 12.5, y: 40.0 }, "press"),
+        (SelOp::Word { x: 3.0, y: 4.25 }, "word"),
+        (SelOp::Extend { x: 99.0, y: 7.0 }, "extend"),
+    ];
+    for (op, name) in points {
+        let s = selection(120.5, op);
+        assert_replies_json(&s);
+        let a = args(&s);
+        assert_eq!(a["top"], json!(120.5));
+        assert_eq!(a["op"], json!(name));
+        let (x, y) = match op {
+            SelOp::Press { x, y } | SelOp::Word { x, y } | SelOp::Extend { x, y } => (x, y),
+            _ => unreachable!(),
+        };
+        assert_eq!((a["x"].as_f64(), a["y"].as_f64()), (Some(x), Some(y)), "{name}");
+    }
+    for (op, name) in [(SelOp::Rects, "rects"), (SelOp::Text, "text"), (SelOp::Clear, "clear")] {
+        let s = selection(0.0, op);
+        assert_replies_json(&s);
+        let a = args(&s);
+        assert_eq!(a["op"], json!(name));
+        assert_eq!(a["top"], json!(0.0));
+        assert!(a.get("x").is_none() && a.get("y").is_none(), "{name}");
+    }
+    let s = selection(0.0, SelOp::Rects);
+    assert!(s.contains("window.scrollTo(0, a.top)") && s.contains("caretRangeFromPoint") && s.contains("peekSel"));
+}
+
+#[test]
+fn selection_coordinates_stay_json() {
+    // NaN and infinity are not JSON: they become 0 rather than null or a bare word in the script
+    let s = selection(f64::INFINITY, SelOp::Extend { x: f64::NAN, y: f64::NEG_INFINITY });
+    assert_replies_json(&s);
+    let a = args(&s);
+    assert_eq!((a["top"].as_f64(), a["x"].as_f64(), a["y"].as_f64()), (Some(0.0), Some(0.0), Some(0.0)));
+    assert!(!s.contains("NaN") && !s.contains("inf"), "{s}");
 }
