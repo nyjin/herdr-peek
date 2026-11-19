@@ -297,8 +297,14 @@ fn draw_bar() {
     out(&format!("{text}{}", term::caret(caret)));
 }
 
+/// Device px per CSS px of the page: the device pixel ratio times the page zoom (at zoom Z % one CSS px is Z / 100
+/// view points, while `scrollTo`, `scrollY`, `scrollHeight` and client rects stay in CSS px).
+fn css_scale(v: &Viewer) -> f64 {
+    v.dpr * v.zoom as f64 / 100.0
+}
+
 fn doc_rows(v: &Viewer) -> u64 {
-    (v.doc_h * v.dpr / v.g.cell_h as f64).ceil() as u64
+    (v.doc_h * css_scale(v) / v.g.cell_h as f64).ceil() as u64
 }
 
 /// Rows the page shows: all but the bar, and but the last while a toast or the status row stands there (the status
@@ -505,7 +511,7 @@ fn load_page(html: String) {
                 v.loaded_at = now_ms();
                 v.generation += 1;
                 v.ready.clear();
-                v.view_top = v.keep_top.take().unwrap_or((info.top_hint * v.dpr / v.g.cell_h as f64) as u64);
+                v.view_top = v.keep_top.take().unwrap_or((info.top_hint * css_scale(v) / v.g.cell_h as f64) as u64);
                 // pointer scripts, the status row and the selection were about the page that went
                 v.jobs.clear();
                 v.status = None;
@@ -630,7 +636,7 @@ fn capture(tile: u64, done: impl FnOnce(bool) + 'static) {
         (
             v.r.clone(),
             v.generation,
-            tile as f64 * v.tile_rows as f64 * v.g.cell_h as f64 / v.dpr,
+            tile as f64 * v.tile_rows as f64 * v.g.cell_h as f64 / css_scale(v),
             v.g.cols as u32 * v.g.cell_w,
             v.tile_rows * v.g.cell_h,
             background(v),
@@ -719,7 +725,7 @@ fn resized() {
         draw_bar();
         return;
     }
-    let (r, top_css) = with(|v| (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr));
+    let (r, top_css) = with(|v| (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / css_scale(v)));
     let t0 = now_ms();
     r.eval(&format!("window.scrollTo(0, {top_css}); {}", script::anchor()), move |anchor| {
         apply_geometry();
@@ -731,7 +737,7 @@ fn resized() {
             r.eval(&script::restore(anchor.as_deref().unwrap_or("null")), move |y| {
                 with(|v| {
                     v.view_top = match y.and_then(|y| y.trim().parse::<f64>().ok()) {
-                        Some(y) => (y * v.dpr / v.g.cell_h as f64).round() as u64,
+                        Some(y) => (y * css_scale(v) / v.g.cell_h as f64).round() as u64,
                         None if old.1 > 0 => old.0 * doc_rows(v) / old.1,
                         None => 0,
                     };
@@ -809,7 +815,7 @@ fn run_find() {
             }
             if y >= 0.0 {
                 // the match a third of the way down the screen
-                let row = (y * w.dpr / w.g.cell_h as f64) as u64;
+                let row = (y * css_scale(w) / w.g.cell_h as f64) as u64;
                 w.view_top = row.saturating_sub(view_rows(w) as u64 / 3);
             }
         });
@@ -851,8 +857,10 @@ fn zoom(f: impl FnOnce(u32) -> u32) {
     }
     let _ = state::set_zoom(new);
     let (r, top_css) = with(|v| {
+        // the page is still at the old zoom while the anchor is read
+        let top_css = v.view_top as f64 * v.g.cell_h as f64 / css_scale(v);
         v.zoom = new;
-        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr)
+        (v.r.clone(), top_css)
     });
     let t0 = now_ms();
     r.eval(&format!("window.scrollTo(0, {top_css}); {}", script::anchor()), move |anchor| {
@@ -871,7 +879,7 @@ fn restore_and_draw(anchor: Option<String>, t0: f64) {
     r.eval(&script::restore(anchor.as_deref().unwrap_or("null")), move |y| {
         with(|v| {
             if let Some(y) = y.and_then(|y| y.trim().parse::<f64>().ok()) {
-                v.view_top = (y * v.dpr / v.g.cell_h as f64).round() as u64;
+                v.view_top = (y * css_scale(v) / v.g.cell_h as f64).round() as u64;
             }
         });
         invalidate();
@@ -898,7 +906,8 @@ fn screenshot() {
     }
     let (r, top_css, h_css, doc) = with(|v| {
         let doc = v.item.as_ref().map(|i| Path::new(&i.label).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).unwrap_or_default();
-        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr, view_rows(v) as f64 * v.g.cell_h as f64 / v.dpr, doc)
+        let scale = css_scale(v);
+        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / scale, view_rows(v) as f64 * v.g.cell_h as f64 / scale, doc)
     });
     let line_js = format!("window.scrollTo(0, {top_css}); (() => {{ const e = document.elementFromPoint(40, 4); const tr = e && e.closest('tr[id^=L]'); return JSON.stringify(tr ? tr.id.slice(1) : null); }})()");
     r.eval(&line_js, move |line| {
@@ -1056,7 +1065,7 @@ fn selected(op: SelOp, reply: Option<String>) {
         SelOp::Press { .. } => {}
         SelOp::Word { .. } | SelOp::Extend { .. } | SelOp::Rects | SelOp::Clear => {
             let css = reply.and_then(|s| serde_json::from_str::<Option<Vec<[f64; 4]>>>(&s).ok()).flatten();
-            with(|v| v.sel_rects = overlay::rects_from_css(&css.unwrap_or_default(), v.dpr));
+            with(|v| v.sel_rects = overlay::rects_from_css(&css.unwrap_or_default(), css_scale(v)));
             draw(now_ms());
         }
         SelOp::Text => {
@@ -1137,7 +1146,7 @@ fn scroll_to_anchor(frag: &str) {
     let js = format!("(() => {{ const e = document.getElementById({id}); return JSON.stringify(e ? e.getBoundingClientRect().top + window.scrollY : -1); }})()");
     r.eval(&js, |y| {
         if let Some(y) = y.and_then(|y| y.parse::<f64>().ok()).filter(|y| *y >= 0.0) {
-            with(|v| v.view_top = (y * v.dpr / v.g.cell_h as f64) as u64);
+            with(|v| v.view_top = (y * css_scale(v) / v.g.cell_h as f64) as u64);
             draw(now_ms());
         }
     });
@@ -1300,8 +1309,9 @@ fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
     let (gesture, (x, y), was, held, on_page) = with(|v| {
         let was = status_shown(v);
         let held = v.gestures.held();
-        let (x, y) = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), v.dpr);
-        let point = (x, y + v.view_top as f64 * v.g.cell_h as f64 / v.dpr);
+        let scale = css_scale(v);
+        let (x, y) = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), scale);
+        let point = (x, y + v.view_top as f64 * v.g.cell_h as f64 / scale);
         let gesture = v.gestures.on(m.kind, m.button, cell, t);
         if on_bar && m.kind == MouseKind::Move && m.button == 3 {
             // the bar's tooltips take over from the status row

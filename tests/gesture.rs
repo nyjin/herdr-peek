@@ -122,3 +122,9 @@ fn page_point_maps_like_a_click_and_clamps() {
     // below the last row
     assert_eq!(page_point(20, 40 * 36, 36, 2, 20, 2.0).1, (20.0 * 36.0 - 1.0) / 2.0);
 }
+
+#[test]
+fn page_point_takes_the_page_zoom_in_its_scale() {
+    // dpr 2 at page zoom 150 %: 3 device px per CSS px
+    assert_eq!(page_point(30, 2 * 36 + 10, 36, 2, 20, 3.0), (10.0, 46.0 / 3.0));
+}

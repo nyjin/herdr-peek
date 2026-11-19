@@ -121,16 +121,18 @@ impl Renderer {
         unsafe { self.web.setPageZoom(percent as f64 / 100.0) };
     }
 
-    /// Capture the band of the page from `top_css` (as tall as the view's frame) into a new POSIX shared memory
-    /// object `shm_name` of `w_px` x `h_px` RGBA, the page background `bg` where the document has ended.
+    /// Capture the band of the page from `top_css` (CSS px; as tall as the view's frame) into a new POSIX shared
+    /// memory object `shm_name` of `w_px` x `h_px` RGBA, the page background `bg` where the document has ended.
     pub fn capture(&self, top_css: f64, w_px: u32, h_px: u32, bg: [u8; 3], shm_name: String, done: impl FnOnce(Result<(), String>) + 'static) {
         let me = self.clone();
         let done = Rc::new(RefCell::new(Some(Box::new(done) as Box<dyn FnOnce(Result<(), String>)>)));
         self.eval(&format!("window.scrollTo(0, {top_css}); JSON.stringify(window.scrollY)"), move |s| {
             let scroll_y: f64 = s.and_then(|s| s.parse().ok()).unwrap_or(top_css);
             let (vw, vh) = me.frame();
-            // Near the document's end the view cannot scroll as far as asked: take the part below the offset.
-            let offset = (top_css - scroll_y).clamp(0.0, vh);
+            // Near the document's end the view cannot scroll as far as asked: take the part below the offset. The
+            // scroll is in CSS px, the snapshot rect in view points: one CSS px is `pageZoom` points.
+            let zoom = unsafe { me.web.pageZoom() };
+            let offset = ((top_css - scroll_y) * zoom).clamp(0.0, vh);
             let band_h = vh - offset;
             let mtm = MainThreadMarker::new().unwrap();
             let cfg = unsafe { WKSnapshotConfiguration::new(mtm) };
@@ -157,18 +159,20 @@ impl Renderer {
 }
 
 impl Renderer {
-    /// Write the band of the page from `top_css`, `h_css` tall, as a PNG at `path` (screen pixels).
+    /// Write the band of the page from `top_css`, `h_css` tall (both CSS px), as a PNG at `path` (screen pixels).
     pub fn snapshot_png(&self, top_css: f64, h_css: f64, path: std::path::PathBuf, done: impl FnOnce(Result<(), String>) + 'static) {
         let me = self.clone();
         let done = RefCell::new(Some(done));
         self.eval(&format!("window.scrollTo(0, {top_css}); JSON.stringify(window.scrollY)"), move |s| {
             let scroll_y: f64 = s.and_then(|s| s.parse().ok()).unwrap_or(top_css);
             let (vw, vh) = me.frame();
-            let offset = (top_css - scroll_y).clamp(0.0, vh);
+            // CSS px to view points, as in `capture`
+            let zoom = unsafe { me.web.pageZoom() };
+            let offset = ((top_css - scroll_y) * zoom).clamp(0.0, vh);
             let mtm = MainThreadMarker::new().unwrap();
             let cfg = unsafe { WKSnapshotConfiguration::new(mtm) };
             unsafe {
-                cfg.setRect(CGRect::new(CGPoint::new(0.0, offset), CGSize::new(vw, h_css.min(vh - offset).max(1.0))));
+                cfg.setRect(CGRect::new(CGPoint::new(0.0, offset), CGSize::new(vw, (h_css * zoom).min(vh - offset).max(1.0))));
                 cfg.setSnapshotWidth(Some(&NSNumber::new_f64(vw)));
                 cfg.setAfterScreenUpdates(true);
             }

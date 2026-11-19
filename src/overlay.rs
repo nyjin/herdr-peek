@@ -33,9 +33,10 @@ pub fn selection_color(page_bg: Rgb) -> [u8; 4] {
     [v, v, v, 71]
 }
 
-/// `[x, y, w, h]` rectangles in CSS px as device-pixel `Rect`s.
-pub fn rects_from_css(css: &[[f64; 4]], dpr: f64) -> Vec<Rect> {
-    css.iter().map(|r| Rect { x: r[0] * dpr, y: r[1] * dpr, w: r[2] * dpr, h: r[3] * dpr }).collect()
+/// `[x, y, w, h]` rectangles in CSS px as device-pixel `Rect`s, at `scale` device px per CSS px (the device pixel
+/// ratio times the page zoom).
+pub fn rects_from_css(css: &[[f64; 4]], scale: f64) -> Vec<Rect> {
+    css.iter().map(|r| Rect { x: r[0] * scale, y: r[1] * scale, w: r[2] * scale, h: r[3] * scale }).collect()
 }
 
 /// The pixel columns or rows `start..end` (exclusive) of a span whose centres lie inside `from..from + len`,

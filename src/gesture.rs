@@ -108,10 +108,11 @@ impl Gestures {
 }
 
 /// The page point (CSS pixels, from the page view's top left) under the terminal pixel `(x_px, y_px)`. The view
-/// starts at 1-based terminal row `first_row`, is `view_rows` rows of `cell_h` pixels tall and is drawn at device
-/// pixel ratio `dpr`. A point above or below the view lands on its first or last pixel row.
-pub fn page_point(x_px: u32, y_px: u32, cell_h: u32, first_row: u16, view_rows: u32, dpr: f64) -> (f64, f64) {
+/// starts at 1-based terminal row `first_row`, is `view_rows` rows of `cell_h` pixels tall and is drawn at `scale`
+/// device pixels per CSS pixel (the device pixel ratio times the page zoom). A point above or below the view lands
+/// on its first or last pixel row.
+pub fn page_point(x_px: u32, y_px: u32, cell_h: u32, first_row: u16, view_rows: u32, scale: f64) -> (f64, f64) {
     let top = (first_row as u32).saturating_sub(1) * cell_h;
     let y_in_view = y_px.saturating_sub(top).min((view_rows * cell_h).saturating_sub(1));
-    (x_px as f64 / dpr, y_in_view as f64 / dpr)
+    (x_px as f64 / scale, y_in_view as f64 / scale)
 }

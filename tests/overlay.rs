@@ -45,6 +45,15 @@ fn css_rects_scale_by_dpr() {
     );
 }
 
+#[test]
+fn css_rects_take_the_page_zoom_in_their_scale() {
+    // dpr 2 at page zoom 150 %: 3 device px per CSS px
+    assert_eq!(
+        rects_from_css(&[[10.0, 100.0, 20.0, 18.0]], 3.0),
+        vec![Rect { x: 30.0, y: 300.0, w: 60.0, h: 54.0 }]
+    );
+}
+
 fn coloured(px: &[u8], width: u32, cell_h: u32) -> Vec<(u32, u32)> {
     let mut out = Vec::new();
     for y in 0..cell_h {
