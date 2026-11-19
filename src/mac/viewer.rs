@@ -3,11 +3,12 @@
 //! an input thread and a state thread only post work to it.
 use super::render::{after, Renderer};
 use crate::kitty::{self, Geometry, TILE_BUDGET};
+use crate::overlay::{self, Rect, StripView, Strips};
 use crate::page::{self, Doc, PageOptions};
 use crate::state::{self, Item, Mode, ViewState};
 use crate::fetch::{self, Endpoints};
 use crate::gesture::{self, Gesture, Gestures};
-use crate::script::FindQuery;
+use crate::script::{FindQuery, SelOp};
 use crate::term::{self, Input, Key, MouseKind};
 use crate::theme::{self, PageTheme};
 use crate::{herdr, script, target};
@@ -43,6 +44,8 @@ enum Job {
     Hover { x: f64, y: f64 },
     /// The link under a click, to follow.
     Click { x: f64, y: f64 },
+    /// The selection script: start, extend or clear the selection, ask for its rectangles or its text.
+    Sel(SelOp),
 }
 
 struct Viewer {
@@ -99,6 +102,10 @@ struct Viewer {
     /// The destination of the link under the pointer, shown on the last row (the status row) unless a toast stands
     /// there or the button is held.
     status: Option<String>,
+    /// The selection's rectangles in device px from the document's top; empty without a selection.
+    sel_rects: Vec<Rect>,
+    /// The selection's strips the terminal holds (`overlay::Strips`), placed with every draw.
+    strips: Strips,
     /// Where the terminal cursor stands while the find field takes typing.
     caret: Option<u16>,
     title: String,
@@ -191,6 +198,8 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             job_running: false,
             shooting: false,
             status: None,
+            sel_rects: Vec::new(),
+            strips: Strips::default(),
             caret: None,
             title: "peek".into(),
             shm_seq: 0,
@@ -385,7 +394,11 @@ fn message(lines: &[String]) {
     for (n, l) in lines.iter().enumerate() {
         s.push_str(&format!("\x1b[{};3H{l}", FIRST_ROW as usize + 1 + n));
     }
-    with(|v| v.placed.clear());
+    // `delete_all` took the selection's strips too
+    with(|v| {
+        v.placed.clear();
+        v.strips.forget();
+    });
     out(&s);
 }
 
@@ -493,9 +506,10 @@ fn load_page(html: String) {
                 v.generation += 1;
                 v.ready.clear();
                 v.view_top = v.keep_top.take().unwrap_or((info.top_hint * v.dpr / v.g.cell_h as f64) as u64);
-                // pointer scripts and the status row were about the page that went
+                // pointer scripts, the status row and the selection were about the page that went
                 v.jobs.clear();
                 v.status = None;
+                v.sel_rects.clear();
             });
             log(serde_json::json!({"ev": "loaded", "ms": now_ms() - t0, "doc_h": info.doc_h}));
             message(&[]);
@@ -561,11 +575,11 @@ fn draw(t_key: f64) {
     if !go {
         return;
     }
-    let (lay, missing) = with(|v| {
+    let (lay, rows, missing) = with(|v| {
         let rows = (view_rows(v) as u64).min(doc_rows(v).saturating_sub(v.view_top)).max(1) as u32;
         let lay = kitty::layout(v.view_top, rows, v.tile_rows, FIRST_ROW, v.generation);
         let missing = lay.iter().map(|(t, _)| *t).find(|t| !v.ready.contains(t));
-        (lay, missing)
+        (lay, rows, missing)
     });
     if let Some(tile) = missing {
         with(|v| v.busy = true);
@@ -586,6 +600,9 @@ fn draw(t_key: f64) {
             s.push_str(&kitty::place(p, w, v.g.cell_h));
         }
         v.placed = new;
+        // the selection over the tiles, on the rows they show
+        let view = StripView { top: v.view_top, rows, first_screen_row: FIRST_ROW, width: w, cell_h: v.g.cell_h };
+        s.push_str(&v.strips.update(&v.sel_rects, view, overlay::selection_color(v.theme.base)));
         if let Some((text, _)) = &v.toast {
             s.push_str(&term::render_toast(text, v.g.rows, v.g.cols));
         } else if let Some(href) = v.status.as_ref().filter(|_| !v.gestures.held()) {
@@ -646,10 +663,12 @@ fn capture(tile: u64, done: impl FnOnce(bool) + 'static) {
     });
 }
 
-/// While idle, capture the tiles around the view (a screen above, two below) and free the ones far away.
+/// While idle, capture the tiles around the view (a screen above, two below) and free the ones far away. Not while
+/// the button is held: the release starts it again.
 fn prefetch() {
     let todo = with(|v| {
-        if v.busy || !v.loaded {
+        // while the button is held its captures would hold the selection's scripts back
+        if v.busy || !v.loaded || v.gestures.held() {
             return None;
         }
         let rows = view_rows(v) as u64;
@@ -721,6 +740,7 @@ fn resized() {
                 message(&[]);
                 draw_bar();
                 log(serde_json::json!({"ev": "relayout", "ms": now_ms() - t0}));
+                refresh_selection();
                 draw(t0);
             });
         });
@@ -858,8 +878,17 @@ fn restore_and_draw(anchor: Option<String>, t0: f64) {
         message(&[]);
         draw_bar();
         log(serde_json::json!({"ev": "relayout", "ms": now_ms() - t0}));
+        refresh_selection();
         draw(t0);
     });
+}
+
+/// After a re-layout the selection's rectangles are stale: ask the page for them again. Until the answer the
+/// selection is not drawn, so it never shows at its old place over the new layout.
+fn refresh_selection() {
+    if with(|v| !std::mem::take(&mut v.sel_rects).is_empty()) {
+        job(Job::Sel(SelOp::Rects));
+    }
 }
 
 /// The screen as a PNG under `screenshots/`, copied to the clipboard; a notification says where it went.
@@ -905,13 +934,18 @@ const TOAST_MS: u64 = 5000;
 /// Show `text` on the last row for `TOAST_MS` (the page draws one row shorter meanwhile); a click on it takes it
 /// away sooner.
 fn toast(text: String) {
+    toast_for(text, TOAST_MS);
+}
+
+/// A toast that stands for `ms`.
+fn toast_for(text: String, ms: u64) {
     let id = with(|v| {
         let id = v.toast.as_ref().map_or(0, |(_, id)| id + 1);
         v.toast = Some((text, id));
         id
     });
     draw(now_ms());
-    after(TOAST_MS, move || {
+    after(ms, move || {
         if with(|v| v.toast.as_ref().is_some_and(|(_, shown)| *shown == id)) {
             end_toast();
         }
@@ -957,14 +991,19 @@ fn browser() {
 }
 
 /// Queue a pointer script for the shown page; none while a page loads (the pointer meant the page that went) or
-/// while the choice list stands over it. A newer hover replaces one still waiting.
+/// while the choice list stands over it. A newer hover replaces one still waiting, and a drag's newer point one
+/// waiting at the back.
 fn job(j: Job) {
     with(|v| {
         if !v.loaded || !v.choices.is_empty() {
             return;
         }
-        if matches!(j, Job::Hover { .. }) {
-            v.jobs.retain(|w| !matches!(w, Job::Hover { .. }));
+        match j {
+            Job::Hover { .. } => v.jobs.retain(|w| !matches!(w, Job::Hover { .. })),
+            Job::Sel(SelOp::Extend { .. }) if matches!(v.jobs.back(), Some(Job::Sel(SelOp::Extend { .. }))) => {
+                v.jobs.pop_back();
+            }
+            _ => {}
         }
         v.jobs.push_back(j);
     });
@@ -986,6 +1025,7 @@ fn next_job() {
     let Some((r, marker, j)) = next else { return };
     let js = match j {
         Job::Hover { x, y } | Job::Click { x, y } => script::hit(x, y),
+        Job::Sel(op) => script::selection(op),
     };
     r.eval(&js, move |reply| {
         // a reply about a page that has been replaced since is dropped
@@ -1003,10 +1043,34 @@ fn next_job() {
                         follow(&href);
                     }
                 }
+                Job::Sel(op) => selected(op, reply),
             }
         }
         next_job();
     });
+}
+
+/// A selection script's answer: the selection's new rectangles, drawn over the page, or its text, copied.
+fn selected(op: SelOp, reply: Option<String>) {
+    match op {
+        SelOp::Press { .. } => {}
+        SelOp::Word { .. } | SelOp::Extend { .. } | SelOp::Rects | SelOp::Clear => {
+            let css = reply.and_then(|s| serde_json::from_str::<Option<Vec<[f64; 4]>>>(&s).ok()).flatten();
+            with(|v| v.sel_rects = overlay::rects_from_css(&css.unwrap_or_default(), v.dpr));
+            draw(now_ms());
+        }
+        SelOp::Text => {
+            // null without a selection, "" for an empty one: nothing to copy then
+            let text = reply.and_then(|s| serde_json::from_str::<Option<String>>(&s).ok()).flatten();
+            let Some(text) = text.filter(|t| !t.is_empty()) else { return };
+            let copied = super::clipboard::copy_text(&text);
+            log(serde_json::json!({"ev": "copy", "chars": text.chars().count(), "ok": copied.is_ok()}));
+            match copied {
+                Ok(()) => toast_for("\u{25cf} Copied to clipboard".into(), 2000),
+                Err(e) => toast_for(format!("\u{2715} Copy failed: {e}"), 2000),
+            }
+        }
+    }
 }
 
 /// The link a `script::hit` reply names, if any.
@@ -1181,6 +1245,11 @@ fn on_key(k: Key, t: f64) {
         Key::Char('s') => act("screenshot"),
         Key::Char('o') => act("browser"),
         Key::Char('h') | Key::Backspace => act("back"),
+        Key::Esc => {
+            if with(|v| !v.sel_rects.is_empty()) {
+                job(Job::Sel(SelOp::Clear));
+            }
+        }
         Key::Char(c) if c.is_ascii_digit() => {
             let choice = with(|v| v.choices.get((c as usize).wrapping_sub('1' as usize)).cloned());
             if let Some(item) = choice {
@@ -1223,11 +1292,14 @@ fn on_mouse(m: term::Mouse, t: f64) {
 }
 
 /// A press on the page, or any move or release, as a gesture (every move and release counts, so a drag that leaves
-/// the page still ends): a click follows the link under it on release, a resting pointer asks for the link under
-/// it. Points are taken on the page as it stood before the report, in document CSS px.
+/// the page still ends): a press starts a selection, a drag extends it, a double-click selects a word, the release
+/// after either copies it; a click takes the selection away and follows the link under it; a resting pointer asks
+/// for the link under it. Points are taken on the page as it stood before the report (a drag past the page at its
+/// nearest row), in document CSS px.
 fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
-    let (gesture, (x, y), was, on_page) = with(|v| {
+    let (gesture, (x, y), was, held, on_page) = with(|v| {
         let was = status_shown(v);
+        let held = v.gestures.held();
         let (x, y) = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), v.dpr);
         let point = (x, y + v.view_top as f64 * v.g.cell_h as f64 / v.dpr);
         let gesture = v.gestures.on(m.kind, m.button, cell, t);
@@ -1238,7 +1310,7 @@ fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
         }
         // the toast's row, and the status row while it stands, are not the page's
         let on_page = cell.1 >= FIRST_ROW && u32::from(cell.1 - FIRST_ROW) < view_rows(v);
-        (gesture, point, was, on_page)
+        (gesture, point, was, held, on_page)
     });
     // a press hides the status row (the page takes its row back), a release brings it back
     if was != with(|v| status_shown(v)) {
@@ -1246,8 +1318,21 @@ fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
     }
     match gesture {
         Gesture::Hover if on_page => job(Job::Hover { x, y }),
-        Gesture::Click => job(Job::Click { x, y }),
+        Gesture::Press => job(Job::Sel(SelOp::Press { x, y })),
+        Gesture::Word => job(Job::Sel(SelOp::Word { x, y })),
+        Gesture::Extend => job(Job::Sel(SelOp::Extend { x, y })),
+        Gesture::Copy => job(Job::Sel(SelOp::Text)),
+        Gesture::Click => {
+            if with(|v| !v.sel_rects.is_empty()) {
+                job(Job::Sel(SelOp::Clear));
+            }
+            job(Job::Click { x, y });
+        }
         _ => {}
+    }
+    // `prefetch` waits while the button is held: start it again once it is not
+    if held && !with(|v| v.gestures.held()) {
+        after(40, prefetch);
     }
 }
 
