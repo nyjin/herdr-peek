@@ -10,16 +10,27 @@ fn hex(s: &str) -> Rgb {
 
 #[test]
 fn selection_color_is_herdrs() {
-    assert_eq!(selection_color(hex("#1e1e2e")), [255, 255, 255, 71]);
-    assert_eq!(selection_color(hex("#eff1f5")), [0, 0, 0, 71]);
-    for base in ["#1e1e2e", "#303446", "#eff1f5", "#000000", "#ffffff", "#808080"] {
+    // herdr: dark when the WCAG relative luminance is below 0.5 (white overlay), else light (black overlay)
+    let white = [255, 255, 255, 71];
+    let black = [0, 0, 0, 71];
+    for (base, want) in [
+        ("#1e1e2e", white),
+        ("#303446", white),
+        ("#000000", white),
+        ("#808080", white), // L = 0.216: dark by WCAG, although its weighted-sum brightness is 128
+        ("#c0c0c0", black), // L = 0.527
+        ("#eff1f5", black),
+        ("#ffffff", black),
+    ] {
+        assert_eq!(selection_color(hex(base)), want, "{base}");
+    }
+    // over the base, the overlay gives herdr's `b + (t - b) * 0.28`, within 1 per channel
+    for base in ["#1e1e2e", "#303446", "#eff1f5", "#000000", "#ffffff", "#808080", "#c0c0c0"] {
         let b = hex(base);
         let c = selection_color(b);
-        let light = c[0] == 0;
-        let target = if light { 0.0 } else { 255.0 };
+        let target = c[0] as f64;
         for base_ch in [b.0, b.1, b.2] {
-            let t = target as u32;
-            let ours = ((base_ch as u32 * 184 + t * 71) as f64 / 255.0).round();
+            let ours = ((base_ch as u32 * 184 + c[0] as u32 * 71) as f64 / 255.0).round();
             let herdr = (base_ch as f64 + (target - base_ch as f64) * 0.28).round();
             assert!((ours - herdr).abs() <= 1.0, "{base}: {ours} vs {herdr}");
         }

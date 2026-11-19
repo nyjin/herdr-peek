@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use crate::kitty;
-use crate::theme::{is_light, Rgb};
+use crate::theme::Rgb;
 
 /// A rectangle in device pixels, `y` from the document's top.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -17,10 +17,19 @@ pub struct Rect {
     pub h: f64,
 }
 
-/// Herdr's selection colour as an overlay: white at 28 % alpha over a dark background, black over a light one,
-/// which gives the background mixed 28 % toward white or black, like herdr's own selection. Non-premultiplied RGBA.
+/// WCAG relative luminance, 0 (black) to 1 (white): sRGB channels linearised, weighted 0.2126 / 0.7152 / 0.0722.
+fn relative_luminance(c: Rgb) -> f64 {
+    let lin = |v: u8| {
+        let v = v as f64 / 255.0;
+        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
+}
+
+/// Herdr's selection colour as an overlay: white at 28 % alpha over a dark background (relative luminance below
+/// 0.5, herdr's rule), black over a light one, which gives the background mixed 28 % toward white or black, like herdr's own selection. Non-premultiplied RGBA.
 pub fn selection_color(page_bg: Rgb) -> [u8; 4] {
-    let v = if is_light(page_bg) { 0 } else { 255 };
+    let v = if relative_luminance(page_bg) < 0.5 { 255 } else { 0 };
     [v, v, v, 71]
 }
 
