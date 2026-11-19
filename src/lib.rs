@@ -8,6 +8,7 @@ pub mod gesture;
 pub mod herdr;
 pub mod kitty;
 pub mod link;
+pub mod overlay;
 pub mod page;
 pub mod resolve;
 pub mod script;

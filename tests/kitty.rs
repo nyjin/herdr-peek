@@ -72,3 +72,48 @@ fn delete_commands() {
     assert_eq!(delete_image(4), "\x1b_Ga=d,d=I,i=4,q=2\x1b\\");
     assert_eq!(delete_all(), "\x1b_Ga=d,d=A,q=2\x1b\\");
 }
+
+#[test]
+fn direct_transmission_is_chunked() {
+    let data: Vec<u8> = (0..48 * 32 * 4).map(|i| (i * 7 % 251) as u8).collect();
+    let out = transmit_direct(9, 48, 32, &data);
+    let commands: Vec<&str> = out.split("\x1b_G").skip(1).collect();
+    assert_eq!(commands.len(), 2);
+    let (head0, body0) = commands[0].split_once(';').unwrap();
+    assert!(head0.starts_with("a=t,t=d,f=32,s=48,v=32,i=9,q=2"), "{head0}");
+    assert!(head0.ends_with(",m=1"), "{head0}");
+    let (head1, body1) = commands[1].split_once(';').unwrap();
+    assert_eq!(head1, "m=0");
+    let body1 = body1.strip_suffix("\x1b\\").unwrap();
+    let first = body0.strip_suffix("\x1b\\").unwrap();
+    // the base64 of both chunks joins back to the data
+    assert_eq!(first.len(), 4096);
+    let joined = format!("{first}{body1}");
+    assert_eq!(joined.len(), 8192);
+    assert_eq!(unbase64(&joined), data);
+}
+
+#[test]
+fn small_direct_transmission_is_one_command() {
+    let out = transmit_direct(9, 2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(out.matches("\x1b_G").count(), 1);
+    assert!(out.contains(",m=0;"), "{out}");
+}
+
+#[test]
+fn placement_over_tiles_has_a_z() {
+    let out = place_at(7, 4, 800, 36, 1);
+    assert!(out.contains("\x1b[4;1H"), "{out}");
+    assert!(out.contains("a=p,i=7,p=1,x=0,y=0,w=800,h=36,z=1,C=1,q=2"), "{out}");
+}
+
+fn unbase64(s: &str) -> Vec<u8> {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::new();
+    for c in s.as_bytes().chunks(4) {
+        let v: Vec<u32> = c.iter().filter(|&&b| b != b'=').map(|b| T.iter().position(|t| t == b).unwrap() as u32).collect();
+        let n = v.iter().enumerate().fold(0u32, |n, (i, x)| n | x << (18 - 6 * i));
+        out.extend_from_slice(&n.to_be_bytes()[1..v.len()]);
+    }
+    out
+}

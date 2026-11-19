@@ -59,6 +59,32 @@ pub fn transmit_shm(image: u32, shm_name: &str, w: u32, h: u32) -> String {
     format!("\x1b_Ga=t,i={image},f=32,s={w},v={h},t=s,S={},q=1;{}\x1b\\", w as u64 * h as u64 * 4, base64(shm_name.as_bytes()))
 }
 
+/// Transmit an RGBA image (non-premultiplied, `f=32`) directly in the escape sequence, its base64 cut into
+/// 4096-byte chunks. Small images (selection strips) only: big ones go through shared memory (`transmit_shm`).
+pub fn transmit_direct(image: u32, w: u32, h: u32, rgba: &[u8]) -> String {
+    let data = base64(rgba);
+    let mut chunks: Vec<&str> = data.as_bytes().chunks(4096).map(|c| std::str::from_utf8(c).unwrap_or("")).collect();
+    if chunks.is_empty() {
+        chunks.push("");
+    }
+    let mut out = String::with_capacity(data.len() + 128);
+    for (n, chunk) in chunks.iter().enumerate() {
+        let more = u8::from(n + 1 < chunks.len());
+        if n == 0 {
+            out.push_str(&format!("\x1b_Ga=t,t=d,f=32,s={w},v={h},i={image},q=2,m={more};{chunk}\x1b\\"));
+        } else {
+            out.push_str(&format!("\x1b_Gm={more};{chunk}\x1b\\"));
+        }
+    }
+    out
+}
+
+/// Show an image of `w` x `h` px at terminal row `row`, from its top left, over the tiles (`z` above them),
+/// without moving the cursor.
+pub fn place_at(image: u32, row: u16, w: u32, h: u32, z: i32) -> String {
+    format!("\x1b[{row};1H\x1b_Ga=p,i={image},p=1,x=0,y=0,w={w},h={h},z={z},C=1,q=2\x1b\\")
+}
+
 /// Show `p` at its row, full width, without moving the cursor. Placing the same image again moves it.
 pub fn place(p: &Placement, width_px: u32, cell_h: u32) -> String {
     format!(
