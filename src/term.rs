@@ -296,8 +296,13 @@ pub fn display_width(s: &str) -> usize {
         .sum()
 }
 
-/// `s` cut to at most `width` columns, with a mark when cut.
+/// `s` cut to at most `width` columns, with `~` when cut.
 fn fit(s: &str, width: usize) -> String {
+    cut(s, width, '~')
+}
+
+/// `s` cut to at most `width` columns, with `mark` at the end when cut.
+fn cut(s: &str, width: usize, mark: char) -> String {
     if display_width(s) <= width {
         return s.to_string();
     }
@@ -309,7 +314,7 @@ fn fit(s: &str, width: usize) -> String {
         out.push(c);
     }
     if width > 0 {
-        out.push('~');
+        out.push(mark);
     }
     out
 }
@@ -414,6 +419,41 @@ pub fn render_toast(text: &str, row: u16, cols: u16) -> String {
     let pill = format!(" {} ", fit(text, cols.saturating_sub(2)));
     let lead = cols.saturating_sub(display_width(&pill)) / 2;
     format!("\x1b[{row};1H\x1b[2K{}\x1b[7m{pill}\x1b[27m", " ".repeat(lead))
+}
+
+/// A link's destination for the status row in at most `width` columns: a `file://` URL as the path it names
+/// (decoded, `shorten_path` when too long), anything else (`#anchor`, web and mail addresses) as written, its end
+/// cut with `…` when too long.
+pub fn status_text(href: &str, width: usize) -> String {
+    match href.strip_prefix("file://") {
+        Some(rest) => shorten_path(&percent_decode(rest), width),
+        None => cut(href, width, '\u{2026}'),
+    }
+}
+
+/// The status row: `text` in an inverted pill at the left of row `row` (the pane's last), the rest of the row
+/// cleared.
+pub fn render_status(text: &str, row: u16) -> String {
+    format!("\x1b[{row};1H\x1b[2K\x1b[7m {text} \x1b[27m")
+}
+
+/// `s` with `%XX` escapes decoded (invalid ones stay as they are).
+pub fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// `path` in at most `width` columns: whole when it fits, else its start, `…` and the file name

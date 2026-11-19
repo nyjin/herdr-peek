@@ -283,3 +283,30 @@ fn unterminated_osc_gives_way_to_later_input() {
     expected.extend(parse(b"\x1b[<35;10;20M").0);
     assert_eq!(inputs, expected);
 }
+
+#[test]
+fn status_shows_a_file_as_its_path() {
+    assert_eq!(status_text("file:///Users/me/docs/a%20b.md", 80), "/Users/me/docs/a b.md");
+    let long = format!("file:///{}/notes.md", "dir".repeat(40));
+    let shown = status_text(&long, 30);
+    assert!(shown.ends_with("notes.md"), "{shown}");
+    assert!(shown.contains('\u{2026}'), "{shown}");
+    assert!(display_width(&shown) <= 30, "{shown}");
+}
+
+#[test]
+fn status_shows_anchors_and_addresses_as_written() {
+    assert_eq!(status_text("#install", 80), "#install");
+    assert_eq!(status_text("https://example.com/a?b=c", 80), "https://example.com/a?b=c");
+    let long = format!("https://example.com/{}", "x".repeat(180));
+    let shown = status_text(&long, 40);
+    assert!(display_width(&shown) <= 40, "{shown}");
+    assert!(shown.ends_with('\u{2026}'), "{shown}");
+}
+
+#[test]
+fn status_pill_is_inverted_at_the_left() {
+    let row = render_status("x", 24);
+    assert!(row.starts_with("\x1b[24;1H\x1b[2K\x1b[7m x "), "{row:?}");
+    assert!(row.ends_with("\x1b[27m"), "{row:?}");
+}

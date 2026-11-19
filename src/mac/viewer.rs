@@ -930,8 +930,8 @@ fn follow(href: &str) {
     }
     let Some(rest) = href.strip_prefix("file://") else { return };
     let (path, fragment) = match rest.split_once('#') {
-        Some((p, f)) => (percent_decode(p), Some(f.to_string())),
-        None => (percent_decode(rest), None),
+        Some((p, f)) => (term::percent_decode(p), Some(f.to_string())),
+        None => (term::percent_decode(rest), None),
     };
     let path = PathBuf::from(path);
     let same_doc = with(|v| v.item.as_ref().and_then(|i| i.path.as_ref()).and_then(|p| p.parent()) == Some(path.as_path()) || v.item.as_ref().and_then(|i| i.path.as_ref()) == Some(&path));
@@ -950,7 +950,7 @@ fn follow(href: &str) {
 /// Scroll to the element with id `frag` in the shown page.
 fn scroll_to_anchor(frag: &str) {
     let r = with(|v| v.r.clone());
-    let id = serde_json::to_string(&percent_decode(frag)).unwrap();
+    let id = serde_json::to_string(&term::percent_decode(frag)).unwrap();
     let js = format!("(() => {{ const e = document.getElementById({id}); return JSON.stringify(e ? e.getBoundingClientRect().top + window.scrollY : -1); }})()");
     r.eval(&js, |y| {
         if let Some(y) = y.and_then(|y| y.parse::<f64>().ok()).filter(|y| *y >= 0.0) {
@@ -958,24 +958,6 @@ fn scroll_to_anchor(frag: &str) {
             draw(now_ms());
         }
     });
-}
-
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Keys while the find row is open; returns true when the key was used. Typing goes into the query; page keys
