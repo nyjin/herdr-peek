@@ -6,15 +6,16 @@ use crate::kitty::{self, Geometry, TILE_BUDGET};
 use crate::page::{self, Doc, PageOptions};
 use crate::state::{self, Item, Mode, ViewState};
 use crate::fetch::{self, Endpoints};
+use crate::gesture::{self, Gesture, Gestures};
 use crate::script::FindQuery;
 use crate::term::{self, Input, Key, MouseKind};
 use crate::theme::{self, PageTheme};
 use crate::{herdr, script, target};
 use dispatch2::DispatchQueue;
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEvent, NSScreen};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -33,6 +34,14 @@ struct Find {
     q: FindQuery,
     count: i64,
     index: i64,
+}
+
+/// A script about the point under the pointer (viewport CSS px from `gesture::page_point`), run by `next_job`.
+enum Job {
+    /// The link under a resting pointer, for the status row.
+    Hover { x: f64, y: f64 },
+    /// The link under a click, to follow.
+    Click { x: f64, y: f64 },
 }
 
 struct Viewer {
@@ -79,6 +88,14 @@ struct Viewer {
     /// A toast on the last row (text, id) until its time is up or it is clicked; the page gives up that row
     /// meanwhile (the picture would cover text).
     toast: Option<(String, u64)>,
+    /// Mouse reports on the page told apart as clicks, drags, double-clicks and hover.
+    gestures: Gestures,
+    /// Pointer scripts waiting to run: one at a time, never while a capture runs (`next_job`).
+    jobs: VecDeque<Job>,
+    job_running: bool,
+    /// The destination of the link under the pointer, shown on the last row (the status row) unless a toast stands
+    /// there or the button is held.
+    status: Option<String>,
     /// Where the terminal cursor stands while the find field takes typing.
     caret: Option<u16>,
     title: String,
@@ -166,6 +183,10 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             bar: Vec::new(),
             menu: false,
             toast: None,
+            gestures: Gestures::new(NSEvent::doubleClickInterval() * 1000.0),
+            jobs: VecDeque::new(),
+            job_running: false,
+            status: None,
             caret: None,
             title: "peek".into(),
             shm_seq: 0,
@@ -267,10 +288,16 @@ fn doc_rows(v: &Viewer) -> u64 {
     (v.doc_h * v.dpr / v.g.cell_h as f64).ceil() as u64
 }
 
-/// Rows the page shows: all but the bar, and but the last while a toast stands there.
+/// Rows the page shows: all but the bar, and but the last while a toast or the status row stands there (the status
+/// row gives way while the button is held).
 fn view_rows(v: &Viewer) -> u32 {
-    let toast = v.toast.is_some() as u16;
-    v.g.rows.saturating_sub(FIRST_ROW - 1 + toast).max(1) as u32
+    let last = (v.toast.is_some() || (v.status.is_some() && !v.gestures.held())) as u16;
+    v.g.rows.saturating_sub(FIRST_ROW - 1 + last).max(1) as u32
+}
+
+/// Whether the status row shows: a link is under the pointer, no toast stands and the button is not held.
+fn status_shown(v: &Viewer) -> bool {
+    v.status.is_some() && v.toast.is_none() && !v.gestures.held()
 }
 
 fn page_options(v: &Viewer, line: Option<u32>) -> PageOptions {
@@ -454,6 +481,9 @@ fn load_page(html: String) {
                 v.generation += 1;
                 v.ready.clear();
                 v.view_top = v.keep_top.take().unwrap_or((info.top_hint * v.dpr / v.g.cell_h as f64) as u64);
+                // pointer scripts and the status row were about the page that went
+                v.jobs.clear();
+                v.status = None;
             });
             log(serde_json::json!({"ev": "loaded", "ms": now_ms() - t0, "doc_h": info.doc_h}));
             message(&[]);
@@ -530,6 +560,7 @@ fn draw(t_key: f64) {
         return capture(tile, move |_| {
             with(|v| v.busy = false);
             draw(t_key);
+            next_job();
         });
     }
     let mut s = String::new();
@@ -545,6 +576,9 @@ fn draw(t_key: f64) {
         v.placed = new;
         if let Some((text, _)) = &v.toast {
             s.push_str(&term::render_toast(text, v.g.rows, v.g.cols));
+        } else if let Some(href) = v.status.as_ref().filter(|_| !v.gestures.held()) {
+            // `status_text` leaves out the pill's two padding columns
+            s.push_str(&term::render_status(&term::status_text(href, (v.g.cols as usize).saturating_sub(2)), v.g.rows));
         }
         // placing tiles moves the cursor: put it back in the find field (or keep it hidden)
         s.push_str(&term::caret(v.caret));
@@ -632,6 +666,7 @@ fn prefetch() {
             } else {
                 after(10, prefetch);
             }
+            next_job();
         });
     }
 }
@@ -904,20 +939,87 @@ fn browser() {
     let _ = std::process::Command::new("open").arg(&target).spawn();
 }
 
-/// A click on the page: a link to a local file opens here (with history), a web address in the browser, an
-/// anchor in the same document scrolls to it.
-fn click(x_px: u32, y_px: u32) {
-    if !with(|v| v.loaded) {
-        return;
+/// Queue a pointer script for the shown page; none while a page loads (the pointer meant the page that went) or
+/// while the choice list stands over it. A newer hover replaces one still waiting.
+fn job(j: Job) {
+    with(|v| {
+        if !v.loaded || !v.choices.is_empty() {
+            return;
+        }
+        if matches!(j, Job::Hover { .. }) {
+            v.jobs.retain(|w| !matches!(w, Job::Hover { .. }));
+        }
+        v.jobs.push_back(j);
+    });
+    next_job();
+}
+
+/// Run the first waiting pointer script, scrolled to the view as its tiles were captured. Never while another runs
+/// or a capture is between its scroll and its snapshot (the capture's end calls this again), nor while a page
+/// loads; each reply, once handled, starts the next.
+fn next_job() {
+    let next = with(|v| {
+        if v.job_running || v.busy || !v.loaded {
+            return None;
+        }
+        let j = v.jobs.pop_front()?;
+        v.job_running = true;
+        Some((v.r.clone(), v.marker, v.view_top as f64 * v.g.cell_h as f64 / v.dpr, j))
+    });
+    let Some((r, marker, top_css, j)) = next else { return };
+    let js = match j {
+        Job::Hover { x, y } | Job::Click { x, y } => format!("window.scrollTo(0, {top_css}); {}", script::hit(x, y)),
+    };
+    r.eval(&js, move |reply| {
+        // a reply about a page that has been replaced since is dropped
+        let current = with(|v| {
+            v.job_running = false;
+            v.marker == marker
+        });
+        if current {
+            match j {
+                Job::Hover { .. } => hovered(hit_href(reply)),
+                Job::Click { .. } => {
+                    // a link to a local file opens here (with history), a web address in the browser, an anchor in
+                    // the same document scrolls to it
+                    if let Some(href) = hit_href(reply) {
+                        follow(&href);
+                    }
+                }
+            }
+        }
+        next_job();
+    });
+}
+
+/// The link a `script::hit` reply names, if any.
+fn hit_href(reply: Option<String>) -> Option<String> {
+    reply.and_then(|h| serde_json::from_str::<Option<String>>(&h).ok()).flatten()
+}
+
+/// A hover's answer: the status row shows the link's destination, or goes when there is none.
+fn hovered(href: Option<String>) {
+    let redraw = with(|v| {
+        if v.status == href {
+            return None;
+        }
+        let was = status_shown(v);
+        v.status = href;
+        (was || status_shown(v)).then_some(was)
+    });
+    if let Some(was) = redraw {
+        redraw_status(was);
     }
-    let (r, top_css, x_css, y_css) = with(|v| {
-        let y_in_view = y_px.saturating_sub((FIRST_ROW as u32 - 1) * v.g.cell_h);
-        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr, x_px as f64 / v.dpr, y_in_view as f64 / v.dpr)
-    });
-    r.eval(&format!("window.scrollTo(0, {top_css}); {}", script::hit(x_css, y_css)), |href| {
-        let Some(href) = href.and_then(|h| serde_json::from_str::<Option<String>>(&h).ok()).flatten() else { return };
-        follow(&href);
-    });
+}
+
+/// Draw again after the status row came, went or changed; a row the page takes back is cleared first, as the page
+/// may end above it.
+fn redraw_status(was_shown: bool) {
+    let (shown, rows, caret) = with(|v| (status_shown(v), v.g.rows, v.caret));
+    if was_shown && !shown {
+        out(&format!("\x1b[{rows};1H\x1b[2K{}", term::caret(caret)));
+    }
+    draw(now_ms());
 }
 
 fn follow(href: &str) {
@@ -1085,6 +1187,7 @@ fn on_mouse(m: term::Mouse, t: f64) {
             if with(|v| std::mem::replace(&mut v.hover, item) != item) {
                 draw_bar();
             }
+            pointer(m, (col, row), on_bar, t);
         }
         MouseKind::Press if with(|v| v.toast.is_some() && row == v.g.rows) => end_toast(),
         MouseKind::Press if on_bar => {
@@ -1092,7 +1195,40 @@ fn on_mouse(m: term::Mouse, t: f64) {
                 row_click(n);
             }
         }
-        MouseKind::Press if m.button == 0 => click(m.x_px, m.y_px),
+        // The status row stands for the link it shows: a press on it follows that link and is no press on the page.
+        MouseKind::Press if m.button == 0 && with(|v| v.loaded && row == v.g.rows && status_shown(v)) => {
+            if let Some(href) = with(|v| v.status.clone()) {
+                follow(&href);
+            }
+        }
+        MouseKind::Press | MouseKind::Release => pointer(m, (col, row), on_bar, t),
+    }
+}
+
+/// A press on the page, or any move or release, as a gesture (every move and release counts, so a drag that leaves
+/// the page still ends): a click follows the link under it on release, a resting pointer asks for the link under
+/// it. Points are taken on the page as it stood before the report.
+fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
+    let (gesture, (x, y), was, on_page) = with(|v| {
+        let was = status_shown(v);
+        let point = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), v.dpr);
+        let gesture = v.gestures.on(m.kind, m.button, cell, t);
+        if on_bar && m.kind == MouseKind::Move && m.button == 3 {
+            // the bar's tooltips take over from the status row
+            v.status = None;
+            v.jobs.retain(|j| !matches!(j, Job::Hover { .. }));
+        }
+        // the toast's row, and the status row while it stands, are not the page's
+        let on_page = cell.1 >= FIRST_ROW && u32::from(cell.1 - FIRST_ROW) < view_rows(v);
+        (gesture, point, was, on_page)
+    });
+    // a press hides the status row (the page takes its row back), a release brings it back
+    if was != with(|v| status_shown(v)) {
+        redraw_status(was);
+    }
+    match gesture {
+        Gesture::Hover if on_page => job(Job::Hover { x, y }),
+        Gesture::Click => job(Job::Click { x, y }),
         _ => {}
     }
 }
@@ -1204,6 +1340,9 @@ fn on_state(st: ViewState, first: bool) {
             with(|v| {
                 v.choices = st.items.clone();
                 v.title = "Choose a file".into();
+                // the list covers the page: nothing the pointer did on it stands
+                v.jobs.clear();
+                v.status = None;
             });
             draw_bar();
             message(&lines);
