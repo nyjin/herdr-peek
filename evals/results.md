@@ -92,3 +92,40 @@ folder with `ghostty/config` linked to the user's real one, so Ghostty read the 
 
 Not checked: a terminal that answers fg/bg but no palette (covered by tests only), and Alt+] in the viewer (the
 give-up path is covered by `unterminated_osc_gives_way_to_later_input`).
+
+# Text selection, copy and link hover (2026-11-20 and 21)
+
+The user's own herdr 0.9.0 under Ghostty (macOS, Retina). That herdr has no peek plugin installed, so the branch's
+release build ran as `peek viewer selection-test.md` in a tab of the session, beside a shell pane showing the same
+Markdown. `selection-test.md` is a scratch Markdown file with headings, paragraphs, a tight and a loose list, a table,
+a `<br>` line, a code block with an empty line, Korean text, local, web and in-page links, and filler for scrolling; a
+five-line `sample.rs` served for the source view.
+
+## Found and fixed during the test
+
+1. Positions landed far from the pointer. A probe pane with `?1000h ?1006h ?1016h` got the four corners of a 194 x 69
+   pane as `(1,1)`, `(194,1)`, `(1,69)`, `(194,69)`: herdr 0.9.0-0.9.3 send cell coordinates in SGR form when the
+   host gives cells (0.9.4 and later send the cell's centre in pixels). Fixed in 7188dec: peek asks for cell reports
+   and takes each cell's centre itself. Link clicks had the same defect before this branch.
+2. A source-view drag past the end of a short file copied line numbers (`"1\tfn main"`). Fixed in 2688e3d.
+3. No visible way back after following a link (`h` and Backspace existed). `← Back` added to the bar in 955c1b7.
+
+## Copied text (the clipboard log against the spec's table)
+
+| Selection | Copied |
+|---|---|
+| Table rows | tab-separated cells, one row per line |
+| A tight list | one item per line |
+| A loose list | a blank line between items |
+| The `<br>` line | two lines |
+| A code block | its indentation and its empty line |
+| A heading and paragraphs | blank lines between them |
+| A double-click on a Korean word (two words) | the word alone |
+| The source view of the Markdown file | its lines without numbers, empty lines kept |
+
+After the fixes the user reported the selection following the pointer and landing under it, and links, the hover
+status row, Back, zoom and a pane resize behaving: "works well".
+
+Not checked by hand: select to open ignoring peek's own copies (the plugin and its watcher are not installed in the
+user's herdr; covered by `tests/select.rs` and by a check against the real pasteboard in the plan's Task 5), and the
+light theme.
