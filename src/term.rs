@@ -232,21 +232,25 @@ const fn item(label: &'static str, key: &'static str, action: &'static str, glyp
     BarItem { label, key, action, glyph, text }
 }
 
-/// The top bar's commands, left to right. The source button names what it switches to: `Source` while the page is
-/// rendered, `View` while the source shows. Zoom and screenshot sit behind `…` (`more_items`).
-pub fn bar_items(showing_source: bool) -> Vec<BarItem> {
+/// The top bar's commands, left to right: `Back` first while there is a page to go back to (`can_go_back`, after
+/// following a link to a file). The source button names what it switches to: `Source` while the page is rendered,
+/// `View` while the source shows. Zoom and screenshot sit behind `…` (`more_items`).
+pub fn bar_items(showing_source: bool, can_go_back: bool) -> Vec<BarItem> {
     let toggle = if showing_source {
         item("Show rendered", "v", "toggle", "\u{25c9}", "View")
     } else {
         item("Show source", "v", "toggle", "</>", "Source")
     };
-    vec![
-        item("Reload", "r", "reload", "\u{27f3}", "Reload"),
-        item("Find", "/", "find", "\u{2315}", "Find"),
-        toggle,
-        item("Open in browser", "o", "browser", "\u{2197}", "Browser"),
-        item("More: zoom, screenshot", "", "more", "\u{2026}", "More"),
-    ]
+    let back = can_go_back.then_some(item("Back", "h", "back", "\u{2190}", "Back"));
+    back.into_iter()
+        .chain([
+            item("Reload", "r", "reload", "\u{27f3}", "Reload"),
+            item("Find", "/", "find", "\u{2315}", "Find"),
+            toggle,
+            item("Open in browser", "o", "browser", "\u{2197}", "Browser"),
+            item("More: zoom, screenshot", "", "more", "\u{2026}", "More"),
+        ])
+        .collect()
 }
 
 /// The row `…` opens in place of the bar: zoom out, zoom in (the percentage between them), reset, screenshot, close.
@@ -413,8 +417,8 @@ fn render_row(
 
 /// Row-1 text (with its escape sequences) and the 1-based column range `(start, end)` of each bar item, for
 /// hit-testing. The title (or, while hovering, the hovered item's tooltip) sits left; the items sit right.
-pub fn render_bar(title: &str, showing_source: bool, cols: u16, hover: Option<usize>) -> (String, Vec<(u16, u16)>) {
-    render_row(&bar_items(showing_source), title, cols, hover, None)
+pub fn render_bar(title: &str, showing_source: bool, can_go_back: bool, cols: u16, hover: Option<usize>) -> (String, Vec<(u16, u16)>) {
+    render_row(&bar_items(showing_source, can_go_back), title, cols, hover, None)
 }
 
 /// The row `…` opens: `more_items`, with the zoom percentage between zoom out and zoom in.

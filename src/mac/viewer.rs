@@ -287,7 +287,7 @@ fn draw_bar() {
             let (text, ranges) = term::render_more(&v.title, v.zoom, v.g.cols, v.hover);
             (text, ranges, None)
         } else {
-            let (text, ranges) = term::render_bar(&v.title, v.mode == Mode::Source, v.g.cols, v.hover);
+            let (text, ranges) = term::render_bar(&v.title, v.mode == Mode::Source, !v.history.is_empty(), v.g.cols, v.hover);
             (text, ranges, None)
         };
         v.bar = ranges;
@@ -793,6 +793,7 @@ fn act(action: &str) {
         "browser" => browser(),
         "back" => {
             if let Some((i, m, t)) = with(|v| v.history.pop()) {
+                history_changed();
                 open(i, m, Some(t));
             }
         }
@@ -1134,6 +1135,7 @@ fn follow(href: &str) {
         let (item, mode, top) = with(|v| (v.item.clone(), v.mode, v.view_top));
         if let Some(i) = item {
             with(|v| v.history.push((i, mode, top)));
+            history_changed();
         }
         open(Item { label: path.display().to_string(), path: Some(path), url: None, line: None }, Mode::Rendered, None);
     }
@@ -1198,6 +1200,12 @@ fn find_edit(change: impl FnOnce(&mut String)) {
     run_find();
 }
 
+/// The bar's Back item came or went: the items moved, so the one under the pointer is no longer known.
+fn history_changed() {
+    with(|v| v.hover = None);
+    draw_bar();
+}
+
 /// Leave the zoom row for the bar.
 fn close_menu() {
     with(|v| {
@@ -1224,7 +1232,7 @@ fn row_click(n: usize) {
             Some(action) => act(action),
             None => {}
         }
-    } else if let Some(item) = term::bar_items(source).get(n) {
+    } else if let Some(item) = term::bar_items(source, with(|v| !v.history.is_empty())).get(n) {
         act(item.action);
     }
 }

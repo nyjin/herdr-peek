@@ -183,8 +183,10 @@ Changed 2026-11-20 (text selection and link hover; design: `2026-11-19-peek-text
 
 One text row: file name, then `⟳ Reload` · `⌕ Find` · `</> Source` · `↗ Browser` · `… More`, one column apart
 (changed 2026-11-17 at the user's request: a symbol and a word per item, this order, zoom and screenshot behind
-`…`). The source button names what it switches to: `</> Source` while the page is rendered, `◉ View` while the
-source shows. `… More` turns the row into: `−` · percentage · `+` · `Reset` · `⎙ Screenshot` · `✕`; `Esc` or `✕`
+`…`). After following a link to another file, `← Back` (key `h`) stands first, as long as there is a page to go back
+to (added 2026-11-20 at the user's request: nothing on screen said how to go back). The source button names what it
+switches to: `</> Source` while the page is rendered, `◉ View` while the source shows. `… More` turns the row into:
+`−` · percentage · `+` · `Reset` · `⎙ Screenshot` · `✕`; `Esc` or `✕`
 returns to the bar, and zooming leaves it open for the next click. Hovering an item shows a tooltip with its name and
 key (`Reload (r)`). Clicking runs it. A narrow pane shows the symbols without the words. A dropdown under `…` was not built: text over the page picture needs the
 picture below the cell layer, which herdr's rendering of Kitty placements was not checked for.

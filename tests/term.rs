@@ -105,9 +105,9 @@ fn parses_shift_enter() {
 
 #[test]
 fn bar_order_icons_and_words() {
-    let actions: Vec<&str> = bar_items(false).iter().map(|i| i.action).collect();
+    let actions: Vec<&str> = bar_items(false, false).iter().map(|i| i.action).collect();
     assert_eq!(actions, ["reload", "find", "toggle", "browser", "more"]);
-    let (text, ranges) = render_bar("plan.md", false, 120, None);
+    let (text, ranges) = render_bar("plan.md", false, false, 120, None);
     assert_eq!(ranges.len(), 5);
     // ⟳ and ⌕ draw wider than their cell in common fonts: two spaces keep them off the word
     for cell in ["\u{27f3}  Reload", "\u{2315}  Find", "</> Source", "\u{2197} Browser", "\u{2026} More"] {
@@ -116,23 +116,57 @@ fn bar_order_icons_and_words() {
     assert!(text.contains("plan.md") && !text.contains('%'));
     assert!(ranges.last().unwrap().1 <= 120);
     // hovering an item shows its tooltip (name and key) and marks the item
-    let (hover, _) = render_bar("plan.md", false, 120, Some(0));
+    let (hover, _) = render_bar("plan.md", false, false, 120, Some(0));
     assert!(hover.contains("Reload (r)") && hover.contains("\x1b[7m"));
 }
 
 #[test]
+fn the_back_button_stands_first_only_with_somewhere_to_go_back_to() {
+    // without history the bar is as it was
+    assert!(bar_items(false, false).iter().all(|i| i.action != "back"));
+    let (text, ranges) = render_bar("plan.md", false, false, 120, None);
+    assert!(!text.contains("Back") && !text.contains('\u{2190}') && ranges.len() == 5);
+    // after following a link: Back first, with a tooltip like the others
+    let items = bar_items(false, true);
+    let actions: Vec<&str> = items.iter().map(|i| i.action).collect();
+    assert_eq!(actions, ["back", "reload", "find", "toggle", "browser", "more"]);
+    assert_eq!(tooltip(&items[0]), "Back (h)");
+    let (text, ranges) = render_bar("plan.md", false, true, 120, None);
+    assert_eq!(ranges.len(), 6);
+    let back = text.find("\u{2190} Back").expect("the Back item");
+    assert!(back < text.find("Reload").unwrap(), "{text:?}");
+    // the hovered Back shows its tooltip
+    let (hover, _) = render_bar("plan.md", false, true, 120, Some(0));
+    assert!(hover.contains("Back (h)"));
+    // the source view has it too
+    assert_eq!(bar_items(true, true)[0].action, "back");
+}
+
+#[test]
+fn the_back_button_follows_the_bar_rules() {
+    // one column apart, like the others
+    let (_, ranges) = render_bar("plan.md", false, true, 120, None);
+    let gaps: Vec<u16> = ranges.windows(2).map(|w| w[1].0 - w[0].1).collect();
+    assert!(gaps.iter().all(|g| *g == 2), "{ranges:?}");
+    // a narrow pane keeps the symbol without the word
+    let (text, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", false, true, 40, None);
+    assert!(ranges.last().unwrap().1 <= 40, "{ranges:?}");
+    assert!(text.contains('\u{2190}') && !text.contains("Back"));
+}
+
+#[test]
 fn the_source_button_turns_into_view() {
-    let (rendered, _) = render_bar("plan.md", false, 120, None);
-    let (source, _) = render_bar("plan.md", true, 120, None);
+    let (rendered, _) = render_bar("plan.md", false, false, 120, None);
+    let (source, _) = render_bar("plan.md", true, false, 120, None);
     assert!(rendered.contains("</> Source") && !rendered.contains("View"));
     assert!(source.contains("\u{25c9} View") && !source.contains("Source"));
-    let tip = |showing_source: bool| tooltip(&bar_items(showing_source)[2]);
+    let tip = |showing_source: bool| tooltip(&bar_items(showing_source, false)[2]);
     assert_eq!((tip(false).as_str(), tip(true).as_str()), ("Show source (v)", "Show rendered (v)"));
 }
 
 #[test]
 fn items_stand_an_even_distance_apart() {
-    for (_, ranges) in [render_bar("plan.md", false, 120, None), render_bar("plan.md", true, 120, None)] {
+    for (_, ranges) in [render_bar("plan.md", false, false, 120, None), render_bar("plan.md", true, false, 120, None)] {
         let gaps: Vec<u16> = ranges.windows(2).map(|w| w[1].0 - w[0].1).collect();
         assert!(gaps.iter().all(|g| *g == 2), "{ranges:?}");
     }
@@ -140,21 +174,21 @@ fn items_stand_an_even_distance_apart() {
 
 #[test]
 fn a_symbol_takes_one_column() {
-    let (_, ranges) = render_bar("plan.md", false, 120, None);
+    let (_, ranges) = render_bar("plan.md", false, false, 120, None);
     // " ⟳  Reload " is eleven columns although "⟳" is three bytes
     assert_eq!(ranges[0].1 - ranges[0].0 + 1, 11);
 }
 
 #[test]
 fn a_narrow_bar_keeps_the_icons() {
-    let (text, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", false, 40, None);
+    let (text, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", false, false, 40, None);
     assert!(ranges.last().unwrap().1 <= 40, "{ranges:?}");
     assert!(text.contains("\u{27f3}") && !text.contains("Reload"));
 }
 
 #[test]
 fn tooltips_name_the_key() {
-    let items = bar_items(false).into_iter().chain(bar_items(true)).chain(more_items()).chain(find_items());
+    let items = bar_items(false, false).into_iter().chain(bar_items(true, false)).chain(more_items()).chain(find_items());
     let tips: Vec<String> = items.map(|i| tooltip(&i)).collect();
     for tip in [
         "Open in browser (o)",
