@@ -380,3 +380,16 @@ fn status_never_carries_control_characters() {
     assert_eq!(status_text("#a\u{1b}b", 80), "#a\u{fffd}b");
     assert_eq!(status_text("file:///a/%1b]0;x%07", 80), "/a/\u{fffd}]0;x\u{fffd}");
 }
+
+#[test]
+fn percent_decoding_never_splits_a_character() {
+    // A `%` before a multi-byte character (U+AC00, a Korean syllable: three UTF-8 bytes) is no escape: it stays as
+    // written instead of slicing the string inside that character. A hovered link can carry one (`file://%\u{ac00}/x`
+    // comes back from the hit test as written).
+    assert_eq!(percent_decode("%\u{ac00}"), "%\u{ac00}");
+    assert_eq!(percent_decode("a%2"), "a%2");
+    assert_eq!(percent_decode("%"), "%");
+    assert_eq!(percent_decode("a%20b%2"), "a b%2");
+    assert_eq!(percent_decode("%\u{ac00}%20"), "%\u{ac00} ");
+    assert_eq!(status_text("file://%\u{ac00}/x", 40), "%\u{ac00}/x");
+}
