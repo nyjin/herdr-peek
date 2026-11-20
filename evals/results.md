@@ -110,22 +110,45 @@ five-line `sample.rs` served for the source view.
 2. A source-view drag past the end of a short file copied line numbers (`"1\tfn main"`). Fixed in 2688e3d.
 3. No visible way back after following a link (`h` and Backspace existed). `← Back` added to the bar in 955c1b7.
 
-## Copied text (the clipboard log against the spec's table)
+## Rows checked
 
-| Selection | Copied |
+The user was given a 17-row checklist, in the viewer of the branch's build. The user's reports: after the cell-report
+fix, "works well" plus the request for a Back button; after the source-copy and Back fixes, asked to recheck the
+`sample.rs` drag past the file's end, Back, and rows 11-17, "works well". Neither report gave detail row by row, so
+"reported working" below means those two answers. The clipboard log (the copied text compared with the spec's table)
+also confirmed the copied text of rows 1-7 and 9.
+
+| Row | Result |
 |---|---|
-| Table rows | tab-separated cells, one row per line |
-| A tight list | one item per line |
-| A loose list | a blank line between items |
-| The `<br>` line | two lines |
-| A code block | its indentation and its empty line |
-| A heading and paragraphs | blank lines between them |
-| A double-click on a Korean word (two words) | the word alone |
-| The source view of the Markdown file | its lines without numbers, empty lines kept |
+| 1. Copy from a heading to the second paragraph, with the 2 s copy toast | checked: reported working by the user; clipboard log: blank lines between the heading and the paragraphs |
+| 2. Copy the tight list, with the toast | checked: reported working by the user; clipboard log: one item per line |
+| 3. Copy the loose list, with the toast | checked: reported working by the user; clipboard log: a blank line between items |
+| 4. Copy a table row, with the toast | checked: reported working by the user; clipboard log: tab-separated cells, one row per line |
+| 5. Copy the `<br>` lines, with the toast | checked: reported working by the user; clipboard log: two lines |
+| 6. Copy part of the code block with its empty line, with the toast | checked: reported working by the user; clipboard log: the indentation and the empty line kept |
+| 7. Double-click a Korean word, with the toast | checked: reported working by the user; clipboard log: the word alone (two words) |
+| 8. Double-click the right half of a word's last letter, with the toast | checked: reported working by the user; not captured by the clipboard log |
+| 9. Drag over source-view lines including an empty one, with the toast | checked: reported working by the user; clipboard log: the Markdown file's lines without numbers, empty lines kept |
+| 10. The selection follows the pointer while dragging, and its colour looks like herdr's selection in the next pane (dark theme) | checked: reported working by the user |
+| 11. The selection stays on its text when the wheel scrolls; `Esc` and a click take it away | checked: reported working by the user (also in the recheck) |
+| 12. Hovering a link shows its destination on the last row (local file path, web address, `#table`) | checked: reported working by the user (also in the recheck) |
+| 13. The in-page link scrolls; the local link opens `sample.rs`; back | checked: reported working by the user (also in the recheck) |
+| 14. A drag that starts on a link selects and does not open it | checked: reported working by the user (also in the recheck) |
+| 15. With the status row standing, wheel to the very end and click the last link: the page does not move on press and the link works | checked: reported working by the user (also in the recheck) |
+| 16. Zoom 150 % and 50 %: no seams between tiles while scrolling, and a selection lands on its text; then reset | checked: reported working by the user (also in the recheck) |
+| 17. A pane resize keeps the selection on its text | checked: reported working by the user (also in the recheck) |
+| Recheck after 2688e3d: the `sample.rs` drag past the file's end | checked: reported working by the user; not captured by the clipboard log |
+| Recheck after 955c1b7: Back | checked: reported working by the user |
 
-After the fixes the user reported the selection following the pointer and landing under it, and links, the hover
-status row, Back, zoom and a pane resize behaving: "works well".
+Not checked:
 
-Not checked by hand: select to open ignoring peek's own copies (the plugin and its watcher are not installed in the
-user's herdr; covered by `tests/select.rs` and by a check against the real pasteboard in the plan's Task 5), and the
-light theme.
+- the light theme;
+- select to open ignoring peek's own copies (no plugin or watcher in that herdr; covered by `tests/select.rs` and by a
+  check against the real pasteboard in the plan's Task 5);
+- a screenshot at 150 %;
+- `+`/`-` keeping the top element in place;
+- text crossing tile edges at 110 and 120 %;
+- a link on the last row opened through the status row;
+- tiles while the pointer moves during prefetch (not tried on purpose);
+- the selection going after a reload;
+- herdr 0.9.4 or later with cell reports.
