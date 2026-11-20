@@ -30,25 +30,47 @@ fn parses_utf8_text() {
 }
 
 #[test]
-fn parses_sgr_pixel_mouse() {
-    let (inputs, _) = parse(b"\x1b[<0;534;689M\x1b[<0;534;689m\x1b[<35;1165;1447M\x1b[<64;44;498M\x1b[<65;44;498M");
+fn parses_sgr_cell_mouse() {
+    // peek asks for SGR reports in cells (no ?1016h): the numbers are a 1-based column and row
+    let (inputs, _) = parse(b"\x1b[<0;12;34M\x1b[<0;12;34m\x1b[<35;194;69M\x1b[<64;1;1M\x1b[<65;3;2M");
     let kinds: Vec<_> = inputs
         .iter()
         .map(|i| match i {
-            Input::Mouse(m) => (m.kind, m.x_px, m.y_px),
+            Input::Mouse(m) => (m.kind, m.col, m.row),
             other => panic!("{other:?}"),
         })
         .collect();
     assert_eq!(
         kinds,
         vec![
-            (MouseKind::Press, 534, 689),
-            (MouseKind::Release, 534, 689),
-            (MouseKind::Move, 1165, 1447),
-            (MouseKind::WheelUp, 44, 498),
-            (MouseKind::WheelDown, 44, 498),
+            (MouseKind::Press, 12, 34),
+            (MouseKind::Release, 12, 34),
+            (MouseKind::Move, 194, 69),
+            (MouseKind::WheelUp, 1, 1),
+            (MouseKind::WheelDown, 3, 2),
         ]
     );
+}
+
+#[test]
+fn a_reported_cell_stands_for_the_pixel_at_its_centre() {
+    // herdr 0.9.4's `cell_center_px` rule, up to integer rounding; a 194 x 69 pane of 8 x 18 px cells
+    assert_eq!(cell_center(1, 1, 8, 18), (4, 9));
+    assert_eq!(cell_center(194, 69, 8, 18), (1548, 1233));
+    // a report never names column or row 0; if one did, it would stand for the first cell
+    assert_eq!(cell_center(0, 0, 8, 18), (4, 9));
+}
+
+#[test]
+fn mouse_reports_are_asked_for_in_cells() {
+    // herdr before 0.9.4 answers ?1016h (pixels) with cell numbers, which cannot be told apart from pixels
+    for mode in ["?1000h", "?1003h", "?1006h"] {
+        assert!(MOUSE_ON.contains(mode), "{mode}");
+    }
+    assert!(!MOUSE_ON.contains("1016") && !MOUSE_OFF.contains("1016"));
+    for mode in ["?1000l", "?1003l", "?1006l"] {
+        assert!(MOUSE_OFF.contains(mode), "{mode}");
+    }
 }
 
 #[test]

@@ -83,7 +83,7 @@ Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-onl
 | `herdr` | calls to the herdr CLI | neutral |
 | `render` | hidden `WKWebView`: load, readiness, capture, zoom, find, hit-test | macOS |
 | `kitty` | tiles, shared memory transmission, placements | neutral encoding, macOS shared memory |
-| `term` | raw mode, keys, SGR pixel mouse, resize, top bar text | neutral |
+| `term` | raw mode, keys, SGR mouse (cells), resize, top bar text | neutral |
 | `viewer` | the event loop tying them together | macOS |
 | `watch` | file change events (FSEvents) | macOS |
 | `keychain` | token store | macOS |
@@ -152,7 +152,10 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 
 Changed 2026-11-20 (text selection and link hover; design: `2026-11-19-peek-text-selection-and-link-hover-design.md`).
 
-- Raw mode. Mouse reports in SGR pixels: `?1000h ?1003h ?1006h ?1016h` (presses, releases, drags and moves, wheel).
+- Raw mode. Mouse reports in SGR cells: `?1000h ?1003h ?1006h` (presses, releases, drags and moves, wheel); a
+  report's cell stands for the pixel at its centre (`term::cell_center`), so the pointer moves in steps of a cell.
+  Until 2026-11-20 peek asked for pixels (`?1016h`), but herdr before 0.9.4 answers that with cell numbers, which
+  cannot be told apart from pixels (found in the hand test); herdr 0.9.4 and later take a cell's centre the same way.
   `gesture` tells a click, a drag, a double-click (the system's double-click interval) and hover apart.
 - Wheel scrolls.
 - A click (press and release in one cell) follows a link on release, so a drag that starts on a link does not open

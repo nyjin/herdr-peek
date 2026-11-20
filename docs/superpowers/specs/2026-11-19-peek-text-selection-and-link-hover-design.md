@@ -56,7 +56,8 @@ Anti-goals:
 - herdr passes presses, releases, drags and plain motion to a pane program that turned mouse reporting on
   (`src/pane/input.rs`; CHANGELOG #1865: "preserving ... pane application mouse tracking"). When herdr has only a cell
   position it reports the cell's centre in pixels (`cell_center_px`), so a selection moves in steps of a cell, about
-  one character.
+  one character. That is herdr 0.9.4 and later: before 0.9.4 it sends cell numbers even after `?1016h` (found in the
+  hand test, 2026-11-20), so peek asks for cell reports and takes each cell's centre itself.
 - peek already asks for motion reports (`?1003h`); `term::mouse` parses them as `MouseKind::Move` with
   `button = b & 3`: 0 while the left button is held, 3 with no button.
 - Find marks matches with the CSS Custom Highlight API and captures the tiles again; WebKit paints highlights in its

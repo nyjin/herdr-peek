@@ -30,12 +30,21 @@ pub enum MouseKind {
     WheelDown,
 }
 
+/// A mouse report: what happened, the button (`b & 3`) and the 1-based cell (`cell_center` gives its pixel).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mouse {
     pub kind: MouseKind,
     pub button: u8,
-    pub x_px: u32,
-    pub y_px: u32,
+    pub col: u32,
+    pub row: u32,
+}
+
+/// The pixel (from the pane's top left) at the centre of the 1-based cell `(col, row)` of `cell_w` x `cell_h` px: the
+/// pointer a cell report stands for, as herdr 0.9.4 and later turn a cell into pixels (`cell_center_px`).
+pub fn cell_center(col: u32, row: u32, cell_w: u32, cell_h: u32) -> (u32, u32) {
+    // saturating: the numbers come from the terminal
+    let centre = |n: u32, size: u32| n.saturating_sub(1).saturating_mul(size).saturating_add(size / 2);
+    (centre(col, cell_w), centre(row, cell_h))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -175,12 +184,14 @@ fn mouse(params: &[u8], press: bool) -> Option<Input> {
     } else {
         MouseKind::Release
     };
-    Some(Input::Mouse(Mouse { kind, button: (b & 3) as u8, x_px: x, y_px: y }))
+    Some(Input::Mouse(Mouse { kind, button: (b & 3) as u8, col: x, row: y }))
 }
 
-/// Clicks, moves (for hover) and wheel, reported in pixels.
-pub const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[?1016h";
-pub const MOUSE_OFF: &str = "\x1b[?1016l\x1b[?1006l\x1b[?1003l\x1b[?1000l";
+/// Presses, releases, moves (drags and hover) and wheel, as SGR reports in cells. Not in pixels (`?1016h`): herdr
+/// before 0.9.4 answers that with cell numbers, which cannot be told apart from pixels; `cell_center` does what herdr
+/// 0.9.4 and later do with a cell.
+pub const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1003h\x1b[?1006h";
+pub const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1003l\x1b[?1000l";
 
 /// The pane's cells and pixels from `TIOCGWINSZ`; without pixels, 8 x 18 px cells; without a size, 80 x 24.
 pub fn geometry() -> Geometry {

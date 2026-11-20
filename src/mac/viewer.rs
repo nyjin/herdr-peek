@@ -1271,8 +1271,11 @@ fn on_key(k: Key, t: f64) {
 
 fn on_mouse(m: term::Mouse, t: f64) {
     let (cell_w, cell_h) = with(|v| (v.g.cell_w.max(1), v.g.cell_h.max(1)));
-    let row = (m.y_px / cell_h) as u16 + 1;
-    let col = (m.x_px / cell_w) as u16 + 1;
+    // A report names a cell (herdr before 0.9.4 sends cells even when asked for pixels): its centre stands for the
+    // pointer, so positions move in steps of a cell.
+    let px = term::cell_center(m.col, m.row, cell_w, cell_h);
+    let row = (px.1 / cell_h) as u16 + 1;
+    let col = (px.0 / cell_w) as u16 + 1;
     let on_bar = row == BAR_ROW;
     let item = if on_bar { with(|v| v.bar.iter().position(|(a, b)| (*a..=*b).contains(&col))) } else { None };
     match m.kind {
@@ -1282,7 +1285,7 @@ fn on_mouse(m: term::Mouse, t: f64) {
             if with(|v| std::mem::replace(&mut v.hover, item) != item) {
                 draw_bar();
             }
-            pointer(m, (col, row), on_bar, t);
+            pointer(m, (col, row), px, on_bar, t);
         }
         MouseKind::Press if with(|v| v.toast.is_some() && row == v.g.rows) => end_toast(),
         MouseKind::Press if on_bar => {
@@ -1296,21 +1299,21 @@ fn on_mouse(m: term::Mouse, t: f64) {
                 follow(&href);
             }
         }
-        MouseKind::Press | MouseKind::Release => pointer(m, (col, row), on_bar, t),
+        MouseKind::Press | MouseKind::Release => pointer(m, (col, row), px, on_bar, t),
     }
 }
 
 /// A press on the page, or any move or release, as a gesture (every move and release counts, so a drag that leaves
 /// the page still ends): a press starts a selection, a drag extends it, a double-click selects a word, the release
 /// after either copies it; a click takes the selection away and follows the link under it; a resting pointer asks
-/// for the link under it. Points are taken on the page as it stood before the report (a drag past the page at its
-/// nearest row), in document CSS px.
-fn pointer(m: term::Mouse, cell: (u16, u16), on_bar: bool, t: f64) {
+/// for the link under it. Points are taken at `px`, the pixel the report stands for, on the page as it stood before
+/// the report (a drag past the page at its nearest row), in document CSS px.
+fn pointer(m: term::Mouse, cell: (u16, u16), px: (u32, u32), on_bar: bool, t: f64) {
     let (gesture, (x, y), was, held, on_page) = with(|v| {
         let was = status_shown(v);
         let held = v.gestures.held();
         let scale = css_scale(v);
-        let (x, y) = gesture::page_point(m.x_px, m.y_px, v.g.cell_h, FIRST_ROW, view_rows(v), scale);
+        let (x, y) = gesture::page_point(px.0, px.1, v.g.cell_h, FIRST_ROW, view_rows(v), scale);
         let point = (x, y + v.view_top as f64 * v.g.cell_h as f64 / scale);
         let gesture = v.gestures.on(m.kind, m.button, cell, t);
         if on_bar && m.kind == MouseKind::Move && m.button == 3 {
