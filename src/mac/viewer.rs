@@ -554,6 +554,8 @@ fn watch_images(marker: u64, tries: u32, had_pending: bool) {
         }
         if had_pending && with(|v| v.marker == marker) {
             invalidate();
+            // the images moved the text: the selection's rectangles are asked for again, as after a re-layout
+            refresh_selection();
             draw(now_ms());
         }
     });
