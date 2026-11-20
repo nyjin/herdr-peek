@@ -441,8 +441,13 @@ pub fn render_toast(text: &str, row: u16, cols: u16) -> String {
 /// cut with `…` when too long.
 pub fn status_text(href: &str, width: usize) -> String {
     // The text comes from the page and is drawn raw: a control character (`%1b` decodes to ESC) would be a terminal
-    // command, so each becomes U+FFFD before anything measures or draws it.
-    let plain = |s: &str| s.chars().map(|c| if c.is_control() { '\u{fffd}' } else { c }).collect::<String>();
+    // command, and a bidi format character (U+202E right-to-left override ...) would make the row read as another
+    // destination than a click opens, so each becomes U+FFFD before anything measures or draws it.
+    let hidden = |c: char| {
+        c.is_control()
+            || matches!(c, '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    };
+    let plain = |s: &str| s.chars().map(|c| if hidden(c) { '\u{fffd}' } else { c }).collect::<String>();
     match href.strip_prefix("file://") {
         Some(rest) => shorten_path(&plain(&percent_decode(rest)), width),
         None => cut(&plain(href), width, '\u{2026}'),

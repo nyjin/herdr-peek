@@ -393,3 +393,19 @@ fn percent_decoding_never_splits_a_character() {
     assert_eq!(percent_decode("%\u{ac00}%20"), "%\u{ac00} ");
     assert_eq!(status_text("file://%\u{ac00}/x", 40), "%\u{ac00}/x");
 }
+
+#[test]
+fn status_never_carries_bidi_controls() {
+    // U+202E (right-to-left override) would make a link to `https://a<U+202E>gpj.exe` read `https://aexe.jpg`: the
+    // status row would show another destination than a click opens.
+    let shown = status_text("https://a\u{202e}gpj.exe", 80);
+    assert!(!shown.contains('\u{202e}'), "{shown:?}");
+    assert_eq!(shown, "https://a\u{fffd}gpj.exe");
+    // the other bidi format characters: marks, embeddings, overrides, isolates
+    let bidi = ['\u{61c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}'];
+    for c in bidi.into_iter().chain(['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}']) {
+        assert_eq!(status_text(&format!("#a{c}b"), 80), "#a\u{fffd}b", "{c:?}");
+    }
+    // decoded from a file URL as well: %E2%80%AE is U+202E
+    assert_eq!(status_text("file:///a/%E2%80%AEb", 80), "/a/\u{fffd}b");
+}
