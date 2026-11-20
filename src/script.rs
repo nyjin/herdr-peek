@@ -155,8 +155,26 @@ const SEL: &str = r#"function (a) {
   // The document point, scrolled into the viewport first as `hit` does; only the point ops scroll.
   const point = () => {
     window.scrollTo(0, Math.max(0, a.y - window.innerHeight / 2));
-    const r = document.caretRangeFromPoint(a.x, a.y - window.scrollY);
-    return r ? { node: r.startContainer, offset: r.startOffset } : null;
+    const y = a.y - window.scrollY;
+    const r = document.caretRangeFromPoint(a.x, y);
+    if (!r) return null;
+    // Below or above all text WebKit may answer with the body itself, even with its start under the last line (in
+    // the source view's number column): that point is the document's end or start.
+    const body = document.body, at = r.startContainer;
+    if (body && (at === body || at === document.documentElement)) {
+      const last = body.lastElementChild, first = body.firstElementChild;
+      if (last && y >= last.getBoundingClientRect().bottom) return { node: body, offset: body.childNodes.length };
+      if (first && y < first.getBoundingClientRect().top) return { node: body, offset: 0 };
+    }
+    return { node: r.startContainer, offset: r.startOffset };
+  };
+  // In the source view a line number is no text: an end of the selection on one stands for that line's code, from
+  // its start (`atEnd` false) or to its end.
+  const code = (p, atEnd) => {
+    const el = p.node.nodeType === 1 ? p.node : p.node.parentElement;
+    const n = el && el.closest('td.n');
+    const c = n && n.parentElement.querySelector('td.c');
+    return c ? { node: c, offset: atEnd ? c.childNodes.length : 0 } : p;
   };
   // Not painted and not copied: line numbers, and the source view's note row (it is not a file line).
   const SKIP = 'td.n, tr.note';
@@ -221,9 +239,10 @@ const SEL: &str = r#"function (a) {
         probe.setStart(st.anchor.node, st.anchor.offset);
         probe.collapse(true);
         const first = probe.comparePoint(p.node, p.offset) >= 0 ? [st.anchor, p] : [p, st.anchor];
+        const start = code(first[0], false), end = code(first[1], true);
         const range = new Range();
-        range.setStart(first[0].node, first[0].offset);
-        range.setEnd(first[1].node, first[1].offset);
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
         st.range = range;
       }
       return JSON.stringify(rects());
@@ -256,9 +275,10 @@ const SEL: &str = r#"function (a) {
     case 'text': {
       const range = st.range;
       if (!range) return JSON.stringify(null);
-      const el = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-      const table = el && el.closest('table.source');
-      if (table) return JSON.stringify(sourceText(table));
+      // the source view's lines whenever the selection touches its table, wherever its ends lie (a selection that
+      // reaches past the file's end ends at the body)
+      const table = document.querySelector('table.source');
+      if (table && range.intersectsNode(table)) return JSON.stringify(sourceText(table));
       // Safari's own rendering of the text: select the range, read it, and empty the selection again
       const sel = window.getSelection();
       sel.removeAllRanges();

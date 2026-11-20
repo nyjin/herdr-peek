@@ -165,7 +165,8 @@ fn selection_scripts_carry_their_arguments() {
     // Points are in document px, scrolled into the viewport (as `hit` does) only where a point is taken.
     let s = selection(SelOp::Rects);
     assert!(s.contains("window.scrollTo(0, Math.max(0, a.y - window.innerHeight / 2))"), "{s}");
-    assert!(s.contains("caretRangeFromPoint(a.x, a.y - window.scrollY)") && s.contains("peekSel"), "{s}");
+    assert!(s.contains("const y = a.y - window.scrollY") && s.contains("caretRangeFromPoint(a.x, y)"), "{s}");
+    assert!(s.contains("peekSel"), "{s}");
     assert!(!s.contains("a.top"), "{s}");
 }
 
@@ -177,4 +178,16 @@ fn selection_coordinates_stay_json() {
     let a = args(&s);
     assert_eq!((a["x"].as_f64(), a["y"].as_f64()), (Some(0.0), Some(0.0)));
     assert!(!s.contains("NaN") && !s.contains("inf"), "{s}");
+}
+
+#[test]
+fn selection_in_the_source_view_never_takes_line_numbers() {
+    // Checked in a WebKit view by hand (plan task 8): what the script must hold for the source view's copy.
+    let s = selection(SelOp::Text);
+    // the source view's own text whenever the selection touches its table, wherever its ends lie
+    assert!(s.contains("range.intersectsNode(table)"), "{s}");
+    // an end on a line number stands for that line's code: its start, or its end
+    assert!(s.contains("closest('td.n')") && s.contains("querySelector('td.c')"), "{s}");
+    // below or above all text WebKit may answer with the body itself: that is the document's end or start
+    assert!(s.contains("document.body") && s.contains("lastElementChild"), "{s}");
 }
