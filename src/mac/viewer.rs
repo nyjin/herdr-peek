@@ -403,9 +403,11 @@ fn message(lines: &[String]) {
     for (n, l) in lines.iter().enumerate() {
         s.push_str(&format!("\x1b[{};3H{l}", FIRST_ROW as usize + 1 + n));
     }
-    // `delete_all` took the selection's strips too
+    // `delete_all` took the images with the placements (herdr frees every image left without one, placed or not):
+    // the tiles captured and the selection's strips are gone
     with(|v| {
         v.placed.clear();
+        v.ready.clear();
         v.strips.forget();
     });
     out(&s);
@@ -1473,6 +1475,10 @@ fn on_state(st: ViewState, first: bool) {
                 // the list covers the page: nothing the pointer did on it stands
                 v.jobs.clear();
                 v.status = None;
+                // and takes its place, as a page loading does: nothing draws, captures or follows the old file until
+                // another page opens
+                v.loaded = false;
+                v.watcher = None;
             });
             draw_bar();
             message(&lines);

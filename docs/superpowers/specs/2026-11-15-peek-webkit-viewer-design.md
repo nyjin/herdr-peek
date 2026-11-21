@@ -114,7 +114,9 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
      whose tail matches.
    - A string that starts with `…/` is used only for tail matching.
 3. Remove duplicates by real file (realpath). One candidate opens; several show a selection list in the viewer (as
-   terminal text, the most recent in the transcript first); none gives a herdr notification "file not found".
+   terminal text, the most recent in the transcript first); none gives a herdr notification "file not found". The
+   list takes the shown page's place, as loading does: nothing draws, scrolls or follows that file's changes until
+   another page opens: a number, or `r`, `v` or `h`, which do what they would have done without the list.
 
 ## The page
 
