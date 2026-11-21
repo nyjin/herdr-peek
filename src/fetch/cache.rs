@@ -3,7 +3,7 @@ use crate::fetch::Fetched;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// `~/.cache/peek/links`.
@@ -33,9 +33,11 @@ pub fn store(dir: &Path, url: &str, page: &Fetched) -> io::Result<()> {
     fs::rename(&tmp, file)
 }
 
-/// The cache holds private content: folders it creates are the user's only.
+/// The cache holds private content: folders it creates are the user's only, and so is the cache folder itself when
+/// it was already there (an older peek made it with the default mode).
 fn make_dir(path: &Path) -> io::Result<()> {
-    fs::DirBuilder::new().recursive(true).mode(0o700).create(path)
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
 fn page_file(dir: &Path, url: &str) -> PathBuf {

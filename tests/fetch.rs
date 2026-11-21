@@ -237,6 +237,20 @@ fn cache_is_used_unless_fresh() {
 }
 
 #[test]
+fn cache_folder_is_private_even_when_an_older_peek_made_it_open() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    // an older peek made the folder with the default mode
+    let cache = dir.path().join("links");
+    std::fs::create_dir(&cache).unwrap();
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let page = Fetched { title: "t".into(), html: "<p>h</p>".into(), url: "https://github.com/acme/app/pull/42".into(), fetched_at: "2026-11-21T00:00:00Z".into() };
+    fetch::cache::store(&cache, &page.url, &page).unwrap();
+    let mode = std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700, "mode {mode:o}");
+}
+
+#[test]
 fn unwritable_cache_does_not_fail_the_fetch() {
     let fake = Fake::start(github);
     let dir = tempfile::tempdir().unwrap();

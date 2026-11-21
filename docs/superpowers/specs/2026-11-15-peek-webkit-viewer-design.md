@@ -252,7 +252,8 @@ Debounce 300 ms; reload and keep the reading position.
 
 - Token: `peek auth github` (token, Bearer), stored in the macOS Keychain. peek does not read other tools'
   credentials.
-- Fetched pages are cached in `~/.cache/peek/links/` with the fetch time; `r` fetches again.
+- Fetched pages are cached in `~/.cache/peek/links/` with the fetch time; `r` fetches again. The folder is the
+  user's only (0700), set again with each stored page, so one an older peek made with the default mode closes too.
 - Failures show a page with the cause and the fix: no token (`peek auth ...`), 401/403, 404, timeout.
 
 ## Tests

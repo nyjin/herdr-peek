@@ -465,10 +465,10 @@ fn open_now(item: Item, mode: Mode, keep_top: Option<u64>) {
     fetch_link(url, false);
 }
 
-/// Fetch a GitHub PR link off the main thread, then show it (an error page when it fails).
+/// Fetch a GitHub PR link off the main thread, then show it (an error page when it fails). The cache makes its own
+/// folder, private, when it stores a page.
 fn fetch_link(url: String, fresh: bool) {
-    let cache = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".cache/peek/links");
-    let _ = std::fs::create_dir_all(&cache);
+    let cache = fetch::cache::links_dir();
     std::thread::spawn(move || {
         let t = target::classify(&url);
         let fetched = match fetch::fetch(&t, &super::keychain::Keychain, &cache, fresh, &Endpoints::default()) {
