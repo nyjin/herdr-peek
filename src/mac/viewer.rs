@@ -60,6 +60,7 @@ struct Viewer {
     marker: u64,
     ready: HashSet<u64>,
     placed: HashSet<u32>,
+    /// A capture is between its scroll and its snapshot: screenshots and pointer scripts, which scroll, wait.
     busy: bool,
     dirty: bool,
     loaded: bool,
@@ -99,7 +100,7 @@ struct Viewer {
     /// Pointer scripts waiting to run: one at a time, never while a capture runs (`next_job`).
     jobs: VecDeque<Job>,
     job_running: bool,
-    /// A screenshot is between its scroll and its snapshot: pointer scripts, which scroll, wait (`next_job`).
+    /// A screenshot is between its first scroll and its snapshot: captures and pointer scripts, which scroll, wait.
     shooting: bool,
     /// The destination of the link under the pointer, shown on the last row (the status row) unless a toast stands
     /// there or the button is held.
@@ -574,10 +575,11 @@ fn invalidate() {
     });
 }
 
-/// Put the view on screen, capturing missing tiles first. Requests while a capture runs are folded into one.
+/// Put the view on screen, capturing missing tiles first. Requests while a capture or a screenshot runs are folded
+/// into one.
 fn draw(t_key: f64) {
     let go = with(|v| {
-        if !v.loaded || v.busy {
+        if !v.loaded || v.busy || v.shooting {
             v.dirty = true;
             return false;
         }
@@ -681,7 +683,7 @@ fn capture(tile: u64, done: impl FnOnce(bool) + 'static) {
 fn prefetch() {
     let todo = with(|v| {
         // while the button is held its captures would hold the selection's scripts back
-        if v.busy || !v.loaded || v.gestures.held() {
+        if v.busy || v.shooting || !v.loaded || v.gestures.held() {
             return None;
         }
         let rows = view_rows(v) as u64;
@@ -907,12 +909,19 @@ fn refresh_selection() {
     }
 }
 
-/// The screen as a PNG under `screenshots/`, copied to the clipboard; a notification says where it went.
+/// The screen as a PNG under `screenshots/`, copied to the clipboard; a toast says where it went. A capture or
+/// another screenshot between its scroll and its snapshot goes first (the scrolls would mix), and no capture starts
+/// until this one is taken (`shooting`).
 fn screenshot() {
-    if !with(|v| v.loaded) {
+    let (loaded, wait) = with(|v| (v.loaded, v.busy || v.shooting));
+    if !loaded {
         return;
     }
+    if wait {
+        return after(10, screenshot);
+    }
     let (r, top_css, h_css, doc) = with(|v| {
+        v.shooting = true;
         let doc = v.item.as_ref().map(|i| Path::new(&i.label).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).unwrap_or_default();
         let scale = css_scale(v);
         (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / scale, view_rows(v) as f64 * v.g.cell_h as f64 / scale, doc)
@@ -927,7 +936,6 @@ fn screenshot() {
         };
         let (r, path) = with(|v| (v.r.clone(), v.base.join("screenshots").join(name.replace('/', "_"))));
         let shown = path.clone();
-        with(|v| v.shooting = true);
         r.snapshot_png(top_css, h_css, path, move |res| {
             with(|v| v.shooting = false);
             match res {

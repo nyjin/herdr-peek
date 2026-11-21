@@ -175,7 +175,9 @@ Changed 2026-11-20 (text selection and link hover; design: `2026-11-19-peek-text
   A toast wins over it; while the button is held it gives way to the page; while the pointer is on that row it does
   not change, and a click there follows the link it shows.
 - Pointer scripts (hit tests, selection) run one at a time, and never between a capture's or a screenshot's scroll
-  and its snapshot.
+  and its snapshot. A capture and a screenshot keep out of each other's way the same way: a screenshot waits for a
+  capture under way, and no capture starts from a screenshot's first scroll until its snapshot is taken (WebKit takes
+  a snapshot wherever the page was last scrolled to).
 - Default keys: `j`/`k`/↑/↓ a few lines, `space`/`b`/PgDn/PgUp a screen, `g`/`G` top/bottom, `/` find (keys on the
   find row: "Top bar"), `r` reload, `v` rendered/source (was `t` until 2026-11-17), `+`/`-`/`0` zoom in/out/reset,
   `s` screenshot, `o` open in browser, `h`/Backspace back, `q` close.
