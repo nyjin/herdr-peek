@@ -92,6 +92,8 @@ struct Viewer {
     /// A toast on the last row (text, id) until its time is up or it is clicked; the page gives up that row
     /// meanwhile (the picture would cover text).
     toast: Option<(String, u64)>,
+    /// Toasts shown so far: the next toast's id. Ids never repeat, so an earlier toast's timer never ends a later one.
+    toasts: u64,
     /// Mouse reports on the page told apart as clicks, drags, double-clicks and hover.
     gestures: Gestures,
     /// Pointer scripts waiting to run: one at a time, never while a capture runs (`next_job`).
@@ -193,6 +195,7 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             bar: Vec::new(),
             menu: false,
             toast: None,
+            toasts: 0,
             gestures: Gestures::new(NSEvent::doubleClickInterval() * 1000.0),
             jobs: VecDeque::new(),
             job_running: false,
@@ -952,7 +955,8 @@ fn toast(text: String) {
 /// A toast that stands for `ms`.
 fn toast_for(text: String, ms: u64) {
     let id = with(|v| {
-        let id = v.toast.as_ref().map_or(0, |(_, id)| id + 1);
+        let id = v.toasts;
+        v.toasts += 1;
         v.toast = Some((text, id));
         id
     });
