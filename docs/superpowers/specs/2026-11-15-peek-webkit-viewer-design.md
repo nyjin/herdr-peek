@@ -81,8 +81,9 @@ Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-onl
 | `page` | markdown/source/image/HTML/API content → page HTML (template, theme, CSP) | neutral |
 | `fetch` | GitHub REST calls, link cache | neutral (HTTP client) |
 | `herdr` | calls to the herdr CLI | neutral |
-| `render` | hidden `WKWebView`: load, readiness, capture, zoom, find, hit-test | macOS |
-| `kitty` | tiles, shared memory transmission, placements | neutral encoding, macOS shared memory |
+| `script` | peek's own page scripts (page scripts are off): readiness, find, hit-test, selection, anchors | neutral |
+| `render` | hidden `WKWebView`: load, readiness, capture, screenshot, zoom; runs `script`'s scripts | macOS |
+| `kitty` | tiles, shared memory transmission, placements | neutral encoding, POSIX shared memory |
 | `term` | raw mode, keys, SGR mouse (cells), resize, top bar text | neutral |
 | `viewer` | the event loop tying them together | macOS |
 | `watch` | file change events (FSEvents) | macOS |

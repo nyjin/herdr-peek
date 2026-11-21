@@ -951,7 +951,7 @@ fn screenshot() {
     });
 }
 
-/// How long a toast stays on row 1.
+/// How long a toast stays on the last row.
 const TOAST_MS: u64 = 5000;
 
 /// Show `text` on the last row for `TOAST_MS` (the page draws one row shorter meanwhile); a click on it takes it
