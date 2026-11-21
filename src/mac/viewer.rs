@@ -83,7 +83,6 @@ struct Viewer {
     keep_top: Option<u64>,
     watcher: Option<super::watch::Watcher>,
     loaded_at: f64,
-    seq: u128,
     /// The item under the pointer on row 1, an index into whichever row shows (bar, zoom row or find row).
     hover: Option<usize>,
     /// Column ranges of the items row 1 shows now.
@@ -191,7 +190,6 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             keep_top: None,
             watcher: None,
             loaded_at: 0.0,
-            seq: 0,
             hover: None,
             bar: Vec::new(),
             menu: false,
@@ -1463,7 +1461,6 @@ fn follow_state(source: String) {
 /// A new state: run its command, or show its items. On the viewer's first read a command is skipped: it was
 /// meant for an earlier viewer.
 fn on_state(st: ViewState, first: bool) {
-    with(|v| v.seq = st.seq);
     if let Some(cmd) = st.command.as_deref() {
         if !first {
             return act(cmd);
